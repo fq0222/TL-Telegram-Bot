@@ -238,8 +238,16 @@ input {
   gap: 8px;
 }
 
+.field--light {
+  margin-bottom: 12px;
+}
+
 .field__label {
   color: rgba(237, 243, 246, 0.72);
+}
+
+.field__label--dark {
+  color: #51616a;
 }
 
 .field__input {
@@ -253,6 +261,20 @@ input {
 
 .field__input::placeholder {
   color: rgba(237, 243, 246, 0.42);
+}
+
+.field__input--light {
+  background: rgba(24, 32, 40, 0.03);
+  color: #182028;
+  border-color: rgba(24, 32, 40, 0.1);
+}
+
+.field__input--light::placeholder {
+  color: rgba(24, 32, 40, 0.36);
+}
+
+.content-form {
+  display: block;
 }
 
 .primary-button {
@@ -290,6 +312,27 @@ input {
 
 .auth-view__message[data-tone='muted'] {
   color: rgba(237, 243, 246, 0.72);
+}
+
+.domain-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.domain-pill {
+  padding: 10px 14px;
+  border: 1px solid rgba(24, 32, 40, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: #182028;
+  cursor: pointer;
+}
+
+.domain-pill--active {
+  border-color: rgba(203, 99, 55, 0.42);
+  background: rgba(238, 143, 87, 0.14);
 }
 
 @keyframes fade-up {

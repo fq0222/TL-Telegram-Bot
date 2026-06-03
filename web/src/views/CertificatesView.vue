@@ -4,51 +4,114 @@
       <section class="content-block">
         <h3 class="content-block__title">acme.sh 域名扫描</h3>
         <p class="content-block__text">
-          这里将展示从 `~/.acme.sh` 读取到的可用域名，并允许管理员选择复制到 `/root/tlboot/域名/`。
+          这里会展示从 `~/.acme.sh` 读取到的可用域名，并在选择后复制证书到 `/root/tlboot/域名/`。
         </p>
-        <ul class="content-list">
-          <li>来源目录：`~/.acme.sh`</li>
-          <li>目标目录：`/root/tlboot/&lt;domain&gt;/`</li>
-          <li>目标文件：`fullchain.pem` 与 `privkey.pem`</li>
-        </ul>
+        <div class="domain-picker">
+          <button
+            v-for="domain in domains"
+            :key="domain"
+            class="domain-pill"
+            :class="{ 'domain-pill--active': selectedDomain === domain }"
+            type="button"
+            @click="selectedDomain = domain"
+          >
+            {{ domain }}
+          </button>
+        </div>
+        <button class="primary-button" type="button" :disabled="!selectedDomain || submitting" @click="handleSelectDomain">
+          {{ submitting ? '应用中...' : '启用所选证书' }}
+        </button>
       </section>
 
       <section class="content-block">
-        <h3 class="content-block__title">当前状态骨架</h3>
-        <p class="content-block__text">
-          证书就绪状态：<strong>{{ readyText }}</strong>
-        </p>
+        <h3 class="content-block__title">当前启用状态</h3>
+        <ul class="content-list">
+          <li>证书状态：{{ readyText }}</li>
+          <li>当前域名：{{ status.selected_certificate_domain || '未选择' }}</li>
+          <li>Fullchain：{{ status.tls_fullchain_path || '未配置' }}</li>
+          <li>Privkey：{{ status.tls_privkey_path || '未配置' }}</li>
+        </ul>
+        <p class="content-block__text">{{ message }}</p>
       </section>
     </div>
   </AppShell>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
-import { fetchCertificateStatus } from '../api/admin.js';
+import { computed, onMounted, reactive, ref } from 'vue';
+import {
+  fetchCertificateDomains,
+  fetchCertificateStatus,
+  selectCertificateDomain
+} from '../api/admin.js';
 import AppShell from '../components/AppShell.vue';
 
 /**
- * 概述：提供证书管理页骨架，当前先承载证书来源/目标规则说明与最小状态展示。
+ * 概述：提供证书管理页，负责展示可选域名列表、当前启用状态，并触发证书复制与启用流程。
  */
-const ready = ref(false);
-const readyText = computed(() => (ready.value ? '已就绪' : '未就绪'));
+const domains = ref([]);
+const selectedDomain = ref('');
+const submitting = ref(false);
+const message = ref('请选择一个可用域名以启用证书。');
+const status = reactive({
+  ready: false,
+  selected_certificate_domain: '',
+  tls_fullchain_path: '',
+  tls_privkey_path: ''
+});
+const readyText = computed(() => (status.ready ? '已就绪' : '未就绪'));
 
 /**
- * 拉取证书骨架状态。
- * 核心分支语义：成功时读取 `ready` 字段；失败时默认保持未就绪，提示管理员仍需完成证书配置。
+ * 刷新证书列表与当前状态。
  */
-async function loadCertificateStatus() {
+async function loadCertificateData() {
   try {
-    const response = await fetchCertificateStatus();
+    const [domainsResponse, statusResponse] = await Promise.all([
+      fetchCertificateDomains(),
+      fetchCertificateStatus()
+    ]);
 
-    ready.value = Boolean(response && response.data && response.data.ready);
+    domains.value = domainsResponse?.data?.domains || [];
+    status.ready = Boolean(statusResponse?.data?.ready);
+    status.selected_certificate_domain = statusResponse?.data?.selected_certificate_domain || '';
+    status.tls_fullchain_path = statusResponse?.data?.tls_fullchain_path || '';
+    status.tls_privkey_path = statusResponse?.data?.tls_privkey_path || '';
+    selectedDomain.value = status.selected_certificate_domain || domains.value[0] || '';
   } catch (_error) {
-    ready.value = false;
+    domains.value = [];
+    message.value = '证书信息读取失败，请确认后端服务可用。';
+  }
+}
+
+/**
+ * 选择并启用证书域名。
+ */
+async function handleSelectDomain() {
+  if (!selectedDomain.value) {
+    return;
+  }
+
+  submitting.value = true;
+  message.value = '正在启用所选证书...';
+
+  try {
+    const response = await selectCertificateDomain({
+      domain: selectedDomain.value
+    });
+
+    status.ready = true;
+    status.selected_certificate_domain = response?.data?.selected_certificate_domain || selectedDomain.value;
+    status.tls_fullchain_path = response?.data?.tls_fullchain_path || '';
+    status.tls_privkey_path = response?.data?.tls_privkey_path || '';
+    message.value = '证书已复制并设为当前启用状态。';
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '证书启用失败。';
+  } finally {
+    submitting.value = false;
   }
 }
 
 onMounted(() => {
-  loadCertificateStatus();
+  loadCertificateData();
 });
 </script>

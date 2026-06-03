@@ -45,6 +45,14 @@ function createFakeExpress() {
           handlers
         });
       },
+      put(routePath, ...handlers) {
+        layers.push({
+          type: 'route',
+          method: 'PUT',
+          path: routePath,
+          handlers
+        });
+      },
       handle(req, res) {
         const originalRemainingPath = req._remainingPath || req.originalUrl || '/';
         let layerIndex = 0;

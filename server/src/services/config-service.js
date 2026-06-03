@@ -8,7 +8,7 @@ const logger = createLogger('ConfigService');
 /**
  * 创建系统配置服务。
  * @param {{ repository: { saveConfig?: Function, saveConfigs: Function, getConfig: Function } }} options - 服务依赖，至少需要配置仓储。
- * @returns {{ saveConfig: Function, saveConfigs: Function, getConfig: Function }} 配置服务接口。
+ * @returns {{ saveConfig: Function, saveConfigs: Function, getConfig: Function, getConfigs: Function }} 配置服务接口。
  */
 function createConfigService({ repository }) {
   if (!repository) {
@@ -86,10 +86,33 @@ function createConfigService({ repository }) {
     return repository.getConfig(key.trim());
   }
 
+  /**
+   * 批量读取配置项。
+   * 核心分支语义：仅接受非空键数组；未命中的配置统一回填空字符串，便于控制器直接组装前端配置快照。
+   * @param {string[]} keys - 待读取配置键列表。
+   * @returns {Promise<Record<string, string>>} 以配置键为索引的配置快照。
+   */
+  async function getConfigs(keys) {
+    if (!Array.isArray(keys) || keys.length === 0) {
+      logger.error('批量读取系统配置失败：配置键列表为空或格式非法');
+      throw new Error('Config keys must be a non-empty array');
+    }
+
+    const configEntries = await Promise.all(keys.map((key) => getConfig(key)));
+
+    return keys.reduce((result, key, index) => {
+      const configEntry = configEntries[index];
+
+      result[key] = configEntry && typeof configEntry.value === 'string' ? configEntry.value : '';
+      return result;
+    }, {});
+  }
+
   return {
     saveConfig,
     saveConfigs,
-    getConfig
+    getConfig,
+    getConfigs
   };
 }
 

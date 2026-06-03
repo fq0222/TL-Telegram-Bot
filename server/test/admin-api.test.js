@@ -47,7 +47,15 @@ function createFakeExpress() {
           handlers
         });
       },
-      handle(req, res) {
+      put(routePath, ...handlers) {
+        layers.push({
+          type: 'route',
+          method: 'PUT',
+          path: routePath,
+          handlers
+        });
+      },
+      async handle(req, res) {
         const originalRemainingPath = req._remainingPath || req.originalUrl || '/';
         let layerIndex = 0;
 
@@ -57,7 +65,7 @@ function createFakeExpress() {
          * 继续执行 layer。
          * @param {Error | null} error - 当前错误对象。
          */
-        function next(error) {
+        async function next(error) {
           while (layerIndex < layers.length) {
             const layer = layers[layerIndex];
 
@@ -68,7 +76,7 @@ function createFakeExpress() {
                 continue;
               }
 
-              runHandlers(layer.handlers, error);
+              await runHandlers(layer.handlers, error);
               return;
             }
 
@@ -83,7 +91,7 @@ function createFakeExpress() {
                 continue;
               }
 
-              layer.handler(error, req, res, next);
+              await layer.handler(error, req, res, next);
               return;
             }
 
@@ -100,14 +108,14 @@ function createFakeExpress() {
                 req._remainingPath = nestedPath.startsWith('/') ? nestedPath : `/${nestedPath}`;
               }
 
-              layer.handler.handle(req, res, (nestedError) => {
+              await layer.handler.handle(req, res, async (nestedError) => {
                 req._remainingPath = previousPath;
-                next(nestedError);
+                await next(nestedError);
               });
               return;
             }
 
-            layer.handler(req, res, next);
+            await layer.handler(req, res, next);
             return;
           }
 
@@ -121,30 +129,30 @@ function createFakeExpress() {
          * @param {Function[]} handlers - 路由处理器数组。
          * @param {Error | null} initialError - 初始错误对象。
          */
-        function runHandlers(handlers, initialError) {
+        async function runHandlers(handlers, initialError) {
           let handlerIndex = 0;
 
-          function runNext(error) {
+          async function runNext(error) {
             if (error) {
-              next(error);
+              await next(error);
               return;
             }
 
             if (handlerIndex >= handlers.length) {
-              next(null);
+              await next(null);
               return;
             }
 
             const handler = handlers[handlerIndex];
 
             handlerIndex += 1;
-            handler(req, res, runNext);
+            await handler(req, res, runNext);
           }
 
-          runNext(initialError);
+          await runNext(initialError);
         }
 
-        next(null);
+        await next(null);
       }
     };
   }
@@ -186,9 +194,9 @@ function createResponse() {
 /**
  * 使用注入后的应用分发请求。
  * @param {{ app: { handle: Function }, method: string, path: string, headers?: Record<string, string>, body?: unknown }} options - 分发参数。
- * @returns {{statusCode: number, body: unknown}} 响应结果。
+ * @returns {Promise<{statusCode: number, body: unknown}>} 响应结果。
  */
-function dispatchRequest({ app, method, path, headers = {}, body }) {
+async function dispatchRequest({ app, method, path, headers = {}, body }) {
   const req = {
     method,
     originalUrl: path,
@@ -197,7 +205,8 @@ function dispatchRequest({ app, method, path, headers = {}, body }) {
   };
   const res = createResponse();
 
-  app.handle(req, res);
+  await app.handle(req, res);
+  await new Promise((resolve) => setImmediate(resolve));
 
   return {
     statusCode: res.statusCode,
@@ -205,7 +214,7 @@ function dispatchRequest({ app, method, path, headers = {}, body }) {
   };
 }
 
-test('createApp should mount injected adminRoutes when expressLib and adminRoutes are provided', () => {
+test('createApp should mount injected adminRoutes when expressLib and adminRoutes are provided', async () => {
   const expressLib = createFakeExpress();
   const adminRoutes = expressLib.Router();
 
@@ -223,7 +232,7 @@ test('createApp should mount injected adminRoutes when expressLib and adminRoute
     expressLib,
     adminRoutes
   });
-  const response = dispatchRequest({
+  const response = await dispatchRequest({
     app,
     method: 'GET',
     path: '/api/admin/injected'
@@ -239,7 +248,7 @@ test('createApp should mount injected adminRoutes when expressLib and adminRoute
   });
 });
 
-test('GET /api/admin/config should return 401 when authorization header is missing', () => {
+test('GET /api/admin/config should return 401 when authorization header is missing', async () => {
   const expressLib = createFakeExpress();
   const authService = createAdminAuthService({
     devAuth: {
@@ -256,7 +265,7 @@ test('GET /api/admin/config should return 401 when authorization header is missi
       authService
     })
   });
-  const response = dispatchRequest({
+  const response = await dispatchRequest({
     app,
     method: 'GET',
     path: '/api/admin/config'
@@ -270,7 +279,7 @@ test('GET /api/admin/config should return 401 when authorization header is missi
   });
 });
 
-test('POST /api/admin/auth/login should return injected development token', () => {
+test('POST /api/admin/auth/login should return injected development token', async () => {
   const expressLib = createFakeExpress();
   const authService = createAdminAuthService({
     devAuth: {
@@ -287,7 +296,7 @@ test('POST /api/admin/auth/login should return injected development token', () =
       authService
     })
   });
-  const response = dispatchRequest({
+  const response = await dispatchRequest({
     app,
     method: 'POST',
     path: '/api/admin/auth/login',
@@ -308,7 +317,7 @@ test('POST /api/admin/auth/login should return injected development token', () =
   });
 });
 
-test('createApp default admin route chain should use injected devAuth without manual authService wiring', () => {
+test('createApp default admin route chain should use injected devAuth without manual authService wiring', async () => {
   const expressLib = createFakeExpress();
   const app = createApp({
     expressLib,
@@ -319,7 +328,7 @@ test('createApp default admin route chain should use injected devAuth without ma
       tokenType: 'Bearer'
     }
   });
-  const loginResponse = dispatchRequest({
+  const loginResponse = await dispatchRequest({
     app,
     method: 'POST',
     path: '/api/admin/auth/login',
@@ -328,7 +337,7 @@ test('createApp default admin route chain should use injected devAuth without ma
       password: 'dev-password'
     }
   });
-  const configResponse = dispatchRequest({
+  const configResponse = await dispatchRequest({
     app,
     method: 'GET',
     path: '/api/admin/config',
@@ -351,12 +360,21 @@ test('createApp default admin route chain should use injected devAuth without ma
     code: 0,
     message: 'ok',
     data: {
-      config: {}
+      config: {
+        telegram_bot_token: '',
+        webhook_path: '',
+        webhook_base_url: '',
+        internal_api_base_url: '',
+        internal_api_secret: '',
+        selected_certificate_domain: '',
+        tls_fullchain_path: '',
+        tls_privkey_path: ''
+      }
     }
   });
 });
 
-test('GET /api/admin/certificates/status should require authorization and return certificate skeleton payload', () => {
+test('GET /api/admin/certificates/status should require authorization and return certificate skeleton payload', async () => {
   const expressLib = createFakeExpress();
   const app = createApp({
     expressLib,
@@ -367,12 +385,12 @@ test('GET /api/admin/certificates/status should require authorization and return
       tokenType: 'Bearer'
     }
   });
-  const unauthorizedResponse = dispatchRequest({
+  const unauthorizedResponse = await dispatchRequest({
     app,
     method: 'GET',
     path: '/api/admin/certificates/status'
   });
-  const authorizedResponse = dispatchRequest({
+  const authorizedResponse = await dispatchRequest({
     app,
     method: 'GET',
     path: '/api/admin/certificates/status',
@@ -392,12 +410,15 @@ test('GET /api/admin/certificates/status should require authorization and return
     code: 0,
     message: 'ok',
     data: {
-      ready: false
+      ready: false,
+      selected_certificate_domain: '',
+      tls_fullchain_path: '',
+      tls_privkey_path: ''
     }
   });
 });
 
-test('GET /api/admin/status should return status skeleton payload after authentication', () => {
+test('GET /api/admin/status should return status skeleton payload after authentication', async () => {
   const expressLib = createFakeExpress();
   const app = createApp({
     expressLib,
@@ -408,7 +429,7 @@ test('GET /api/admin/status should return status skeleton payload after authenti
       tokenType: 'Bearer'
     }
   });
-  const response = dispatchRequest({
+  const response = await dispatchRequest({
     app,
     method: 'GET',
     path: '/api/admin/status',
@@ -462,5 +483,278 @@ test('admin auth middleware should attach auth result to req.adminAuth after tok
     adminId: 'admin-1',
     sessionId: 'session-1',
     tokenType: 'Bearer'
+  });
+});
+
+test('PUT /api/admin/config should persist config entries and GET /api/admin/config should return the saved snapshot', async () => {
+  const expressLib = createFakeExpress();
+  const savedEntries = [];
+  const configMap = new Map();
+  const app = createApp({
+    expressLib,
+    devAuth: {
+      token: 'config-token',
+      adminId: 'config-admin',
+      sessionId: 'config-session',
+      tokenType: 'Bearer'
+    },
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService: createAdminAuthService({
+        devAuth: {
+          token: 'config-token',
+          adminId: 'config-admin',
+          sessionId: 'config-session',
+          tokenType: 'Bearer'
+        }
+      }),
+      configService: {
+        async saveConfigs(entries) {
+          savedEntries.push(...entries);
+          entries.forEach((entry) => {
+            configMap.set(entry.key, {
+              key: entry.key,
+              value: entry.value
+            });
+          });
+          return entries;
+        },
+        async getConfigs(keys) {
+          return keys.reduce((result, key) => {
+            result[key] = configMap.has(key) ? configMap.get(key).value : '';
+            return result;
+          }, {});
+        }
+      }
+    })
+  });
+
+  const saveResponse = await dispatchRequest({
+    app,
+    method: 'PUT',
+    path: '/api/admin/config',
+    headers: {
+      authorization: 'Bearer config-token'
+    },
+    body: {
+      telegram_bot_token: 'bot-token-value',
+      webhook_path: '/telegram/webhook',
+      internal_api_base_url: 'https://internal.example.com'
+    }
+  });
+  const getResponse = await dispatchRequest({
+    app,
+    method: 'GET',
+    path: '/api/admin/config',
+    headers: {
+      authorization: 'Bearer config-token'
+    }
+  });
+
+  assert.equal(saveResponse.statusCode, 200);
+  assert.equal(savedEntries.length, 3);
+  assert.deepEqual(getResponse.body, {
+    code: 0,
+    message: 'ok',
+    data: {
+      config: {
+        telegram_bot_token: 'bot-token-value',
+        webhook_path: '/telegram/webhook',
+        internal_api_base_url: 'https://internal.example.com',
+        internal_api_secret: '',
+        webhook_base_url: '',
+        selected_certificate_domain: '',
+        tls_fullchain_path: '',
+        tls_privkey_path: ''
+      }
+    }
+  });
+});
+
+test('GET /api/admin/certificates/domains should return injected certificate domain list', async () => {
+  const expressLib = createFakeExpress();
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService: createAdminAuthService({
+        devAuth: {
+          token: 'domain-token',
+          adminId: 'domain-admin',
+          sessionId: 'domain-session',
+          tokenType: 'Bearer'
+        }
+      }),
+      certificateService: {
+        async listDomains() {
+          return ['example.com', 'bot.example.com'];
+        }
+      }
+    })
+  });
+
+  const response = await dispatchRequest({
+    app,
+    method: 'GET',
+    path: '/api/admin/certificates/domains',
+    headers: {
+      authorization: 'Bearer domain-token'
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, {
+    code: 0,
+    message: 'ok',
+    data: {
+      domains: ['example.com', 'bot.example.com']
+    }
+  });
+});
+
+test('POST /api/admin/certificates/select should activate domain and persist selected certificate paths', async () => {
+  const expressLib = createFakeExpress();
+  const savedEntries = [];
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService: createAdminAuthService({
+        devAuth: {
+          token: 'select-token',
+          adminId: 'select-admin',
+          sessionId: 'select-session',
+          tokenType: 'Bearer'
+        }
+      }),
+      configService: {
+        async saveConfigs(entries) {
+          savedEntries.push(...entries);
+          return entries;
+        },
+        async getConfigs() {
+          return {};
+        }
+      },
+      certificateService: {
+        async activateDomain(domain) {
+          return {
+            domain,
+            fullchainPath: `/root/tlboot/${domain}/fullchain.pem`,
+            privkeyPath: `/root/tlboot/${domain}/privkey.pem`
+          };
+        }
+      }
+    })
+  });
+
+  const response = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/certificates/select',
+    headers: {
+      authorization: 'Bearer select-token'
+    },
+    body: {
+      domain: 'example.com'
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(savedEntries.length, 3);
+  assert.deepEqual(response.body, {
+    code: 0,
+    message: 'ok',
+    data: {
+      selected_certificate_domain: 'example.com',
+      tls_fullchain_path: '/root/tlboot/example.com/fullchain.pem',
+      tls_privkey_path: '/root/tlboot/example.com/privkey.pem'
+    }
+  });
+});
+
+test('POST /api/admin/webhook/register and GET /api/admin/status/overview should return integrated admin data', async () => {
+  const expressLib = createFakeExpress();
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService: createAdminAuthService({
+        devAuth: {
+          token: 'overview-token',
+          adminId: 'overview-admin',
+          sessionId: 'overview-session',
+          tokenType: 'Bearer'
+        }
+      }),
+      configService: {
+        async saveConfigs() {
+          return [];
+        },
+        async getConfigs() {
+          return {
+            webhook_base_url: 'https://bot.example.com',
+            webhook_path: '/telegram/webhook',
+            selected_certificate_domain: 'example.com',
+            tls_fullchain_path: '/root/tlboot/example.com/fullchain.pem',
+            tls_privkey_path: '/root/tlboot/example.com/privkey.pem'
+          };
+        }
+      },
+      certificateService: {
+        async listDomains() {
+          return ['example.com'];
+        }
+      },
+      telegramApiService: {
+        async setWebhook(payload) {
+          return {
+            ok: true,
+            mocked: true,
+            method: 'setWebhook',
+            payload
+          };
+        }
+      }
+    })
+  });
+
+  const registerResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/webhook/register',
+    headers: {
+      authorization: 'Bearer overview-token'
+    }
+  });
+  const overviewResponse = await dispatchRequest({
+    app,
+    method: 'GET',
+    path: '/api/admin/status/overview',
+    headers: {
+      authorization: 'Bearer overview-token'
+    }
+  });
+
+  assert.equal(registerResponse.statusCode, 200);
+  assert.deepEqual(registerResponse.body, {
+    code: 0,
+    message: 'ok',
+    data: {
+      registered: true,
+      webhook_url: 'https://bot.example.com/telegram/webhook'
+    }
+  });
+  assert.equal(overviewResponse.statusCode, 200);
+  assert.deepEqual(overviewResponse.body, {
+    code: 0,
+    message: 'ok',
+    data: {
+      webhook_url: 'https://bot.example.com/telegram/webhook',
+      selected_certificate_domain: 'example.com',
+      tls_fullchain_path: '/root/tlboot/example.com/fullchain.pem',
+      tls_privkey_path: '/root/tlboot/example.com/privkey.pem',
+      certificate_ready: true
+    }
   });
 });

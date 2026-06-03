@@ -22,6 +22,15 @@ export function fetchConfig() {
 }
 
 /**
+ * 保存管理员配置。
+ * @param {Record<string, string>} payload - 配置表单载荷。
+ * @returns {Promise<any>} 配置保存响应。
+ */
+export function saveConfig(payload) {
+  return http.put('/api/admin/config', payload);
+}
+
+/**
  * 获取证书状态骨架。
  * @returns {Promise<any>} 证书状态响应。
  */
@@ -30,9 +39,42 @@ export function fetchCertificateStatus() {
 }
 
 /**
+ * 获取可用证书域名列表。
+ * @returns {Promise<any>} 域名列表响应。
+ */
+export function fetchCertificateDomains() {
+  return http.get('/api/admin/certificates/domains');
+}
+
+/**
+ * 选择并激活证书域名。
+ * @param {{ domain: string }} payload - 待激活域名。
+ * @returns {Promise<any>} 证书选择响应。
+ */
+export function selectCertificateDomain(payload) {
+  return http.post('/api/admin/certificates/select', payload);
+}
+
+/**
  * 获取系统状态骨架。
  * @returns {Promise<any>} 状态接口响应。
  */
 export function fetchStatus() {
   return http.get('/api/admin/status');
+}
+
+/**
+ * 获取管理员概览状态。
+ * @returns {Promise<any>} 概览接口响应。
+ */
+export function fetchOverview() {
+  return http.get('/api/admin/status/overview');
+}
+
+/**
+ * 注册 Telegram Webhook。
+ * @returns {Promise<any>} Webhook 注册响应。
+ */
+export function registerWebhook() {
+  return http.post('/api/admin/webhook/register', {});
 }
