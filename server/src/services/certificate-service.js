@@ -209,7 +209,19 @@ function createCertificateService({
    */
   async function listDomains() {
     logger.info(`开始扫描证书目录：${resolvedAcmeBasePath}`);
-    const directories = await filesystemService.listDirectories(resolvedAcmeBasePath);
+    let directories = [];
+
+    try {
+      directories = await filesystemService.listDirectories(resolvedAcmeBasePath);
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        logger.warn(`证书目录不存在或尚未创建，返回空域名列表：${resolvedAcmeBasePath}`);
+        return [];
+      }
+
+      throw error;
+    }
+
     const domains = [];
 
     for (const directory of directories) {

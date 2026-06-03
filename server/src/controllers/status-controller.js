@@ -69,27 +69,31 @@ function createStatusController(options = {}) {
    * @param {import('express').Response} res - Express 响应对象。
    * @returns {Promise<void>}
    */
-  async function getOverview(_req, res) {
-    const config = await configService.getConfigs([
-      'webhook_base_url',
-      'webhook_path',
-      'selected_certificate_domain',
-      'tls_fullchain_path',
-      'tls_privkey_path'
-    ]);
-    const webhookUrl = buildWebhookUrl(config.webhook_base_url, config.webhook_path);
-    const certificateReady = Boolean(config.tls_fullchain_path && config.tls_privkey_path);
+  async function getOverview(_req, res, next) {
+    try {
+      const config = await configService.getConfigs([
+        'webhook_base_url',
+        'webhook_path',
+        'selected_certificate_domain',
+        'tls_fullchain_path',
+        'tls_privkey_path'
+      ]);
+      const webhookUrl = buildWebhookUrl(config.webhook_base_url, config.webhook_path);
+      const certificateReady = Boolean(config.tls_fullchain_path && config.tls_privkey_path);
 
-    logger.info('返回管理员状态概览');
-    res.json(
-      ok({
-        webhook_url: webhookUrl,
-        selected_certificate_domain: config.selected_certificate_domain || '',
-        tls_fullchain_path: config.tls_fullchain_path || '',
-        tls_privkey_path: config.tls_privkey_path || '',
-        certificate_ready: certificateReady
-      })
-    );
+      logger.info('返回管理员状态概览');
+      res.json(
+        ok({
+          webhook_url: webhookUrl,
+          selected_certificate_domain: config.selected_certificate_domain || '',
+          tls_fullchain_path: config.tls_fullchain_path || '',
+          tls_privkey_path: config.tls_privkey_path || '',
+          certificate_ready: certificateReady
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
   }
 
   /**
@@ -99,29 +103,33 @@ function createStatusController(options = {}) {
    * @param {import('express').Response} res - Express 响应对象。
    * @returns {Promise<void>}
    */
-  async function registerWebhook(_req, res) {
-    const config = await configService.getConfigs(['webhook_base_url', 'webhook_path']);
-    const webhookUrl = buildWebhookUrl(config.webhook_base_url, config.webhook_path);
+  async function registerWebhook(_req, res, next) {
+    try {
+      const config = await configService.getConfigs(['webhook_base_url', 'webhook_path']);
+      const webhookUrl = buildWebhookUrl(config.webhook_base_url, config.webhook_path);
 
-    if (!webhookUrl) {
-      logger.warn('Webhook 注册被跳过：缺少 webhook_base_url 或 webhook_path');
+      if (!webhookUrl) {
+        logger.warn('Webhook 注册被跳过：缺少 webhook_base_url 或 webhook_path');
+        res.json(
+          ok({
+            registered: false,
+            webhook_url: ''
+          })
+        );
+        return;
+      }
+
+      await telegramApiService.setWebhook({ url: webhookUrl });
+      logger.info(`Webhook 注册流程完成，url=${webhookUrl}`);
       res.json(
         ok({
-          registered: false,
-          webhook_url: ''
+          registered: true,
+          webhook_url: webhookUrl
         })
       );
-      return;
+    } catch (error) {
+      next(error);
     }
-
-    await telegramApiService.setWebhook({ url: webhookUrl });
-    logger.info(`Webhook 注册流程完成，url=${webhookUrl}`);
-    res.json(
-      ok({
-        registered: true,
-        webhook_url: webhookUrl
-      })
-    );
   }
 
   return {

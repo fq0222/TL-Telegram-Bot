@@ -50,15 +50,19 @@ function createAdminConfigController(options = {}) {
    * @param {import('express').Response} res - Express 响应对象。
    * @returns {void}
    */
-  async function getConfig(_req, res) {
-    const config = buildConfigSnapshot(await configService.getConfigs(CONFIG_KEYS));
+  async function getConfig(_req, res, next) {
+    try {
+      const config = buildConfigSnapshot(await configService.getConfigs(CONFIG_KEYS));
 
-    logger.info('返回管理员配置骨架响应');
-    res.json(
-      ok({
-        config
-      })
-    );
+      logger.info('返回管理员配置骨架响应');
+      res.json(
+        ok({
+          config
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
   }
 
   /**
@@ -68,31 +72,35 @@ function createAdminConfigController(options = {}) {
    * @param {import('express').Response} res - Express 响应对象。
    * @returns {Promise<void>}
    */
-  async function saveConfig(req, res) {
-    const payload = req.body && typeof req.body === 'object' ? req.body : {};
-    const entries = CONFIG_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(payload, key)).map((key) => ({
-      key,
-      value: typeof payload[key] === 'string' ? payload[key] : String(payload[key] ?? '')
-    }));
+  async function saveConfig(req, res, next) {
+    try {
+      const payload = req.body && typeof req.body === 'object' ? req.body : {};
+      const entries = CONFIG_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(payload, key)).map((key) => ({
+        key,
+        value: typeof payload[key] === 'string' ? payload[key] : String(payload[key] ?? '')
+      }));
 
-    if (entries.length > 0) {
-      await configService.saveConfigs(entries);
+      if (entries.length > 0) {
+        await configService.saveConfigs(entries);
+      }
+
+      const config = buildConfigSnapshot({
+        ...(await configService.getConfigs(CONFIG_KEYS)),
+        ...entries.reduce((result, entry) => {
+          result[entry.key] = entry.value;
+          return result;
+        }, {})
+      });
+
+      logger.info(`管理员配置保存完成，字段数=${entries.length}`);
+      res.json(
+        ok({
+          config
+        })
+      );
+    } catch (error) {
+      next(error);
     }
-
-    const config = buildConfigSnapshot({
-      ...(await configService.getConfigs(CONFIG_KEYS)),
-      ...entries.reduce((result, entry) => {
-        result[entry.key] = entry.value;
-        return result;
-      }, {})
-    });
-
-    logger.info(`管理员配置保存完成，字段数=${entries.length}`);
-    res.json(
-      ok({
-        config
-      })
-    );
   }
 
   return {

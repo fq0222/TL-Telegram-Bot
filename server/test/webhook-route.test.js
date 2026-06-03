@@ -1,5 +1,6 @@
 /**
- * 概述：覆盖 Task 7 Telegram Webhook 路由与命令分发骨架的最小测试，重点验证命令识别与 POST /telegram/webhook 的统一成功响应。
+ * 概述：覆盖 Telegram Webhook 路由与命令分发联调链路，
+ * 重点验证命令识别、内部接口映射与 POST /telegram/webhook 的统一成功响应。
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,7 +15,7 @@ const { createTelegramCommandService } = require('../src/services/telegram-comma
 function createFakeExpress() {
   /**
    * 创建最小路由宿主。
-   * @returns {{use: Function, get: Function, post: Function, handle: Function}} fake app/router。
+   * @returns {{use: Function, get: Function, post: Function, put: Function, handle: Function}} fake app/router。
    */
   function createLayerHost() {
     const layers = [];
@@ -53,11 +54,29 @@ function createFakeExpress() {
           handlers
         });
       },
-      handle(req, res) {
+      handle(req, res, done = () => {}) {
         const originalRemainingPath = req._remainingPath || req.originalUrl || '/';
         let layerIndex = 0;
 
         req._remainingPath = originalRemainingPath;
+
+        /**
+         * 统一执行普通处理器或错误处理中间件，并兼容 Promise 返回值。
+         * @param {Function} handler - 当前待执行处理器。
+         * @param {Array<unknown>} args - 调用参数。
+         * @returns {void}
+         */
+        function invokeHandler(handler, args) {
+          try {
+            const result = handler(...args);
+
+            if (result && typeof result.then === 'function') {
+              result.then(() => undefined).catch((error) => args[args.length - 1](error));
+            }
+          } catch (error) {
+            args[args.length - 1](error);
+          }
+        }
 
         /**
          * 继续执行 layer。
@@ -74,7 +93,7 @@ function createFakeExpress() {
                 continue;
               }
 
-              runHandlers(layer.handlers, error);
+              runHandlers(layer.handlers);
               return;
             }
 
@@ -89,7 +108,7 @@ function createFakeExpress() {
                 continue;
               }
 
-              layer.handler(error, req, res, next);
+              invokeHandler(layer.handler, [error, req, res, next]);
               return;
             }
 
@@ -113,21 +132,18 @@ function createFakeExpress() {
               return;
             }
 
-            layer.handler(req, res, next);
+            invokeHandler(layer.handler, [req, res, next]);
             return;
           }
 
-          if (error) {
-            throw error;
-          }
+          done(error || null);
         }
 
         /**
          * 顺序执行同一路由上的处理器链。
          * @param {Function[]} handlers - 路由处理器数组。
-         * @param {Error | null} initialError - 初始错误对象。
          */
-        function runHandlers(handlers, initialError) {
+        function runHandlers(handlers) {
           let handlerIndex = 0;
 
           function runNext(error) {
@@ -144,10 +160,10 @@ function createFakeExpress() {
             const handler = handlers[handlerIndex];
 
             handlerIndex += 1;
-            handler(req, res, runNext);
+            invokeHandler(handler, [req, res, runNext]);
           }
 
-          runNext(initialError);
+          runNext(null);
         }
 
         next(null);
@@ -171,7 +187,13 @@ function createFakeExpress() {
 
 /**
  * 创建最小响应对象。
- * @returns {{statusCode: number, body: unknown, status: Function, json: Function, on: Function}} fake response。
+ * @returns {{
+ *   statusCode: number,
+ *   body: unknown,
+ *   status: Function,
+ *   json: Function,
+ *   on: Function
+ * }} fake response。
  */
 function createResponse() {
   return {
@@ -192,23 +214,52 @@ function createResponse() {
 /**
  * 使用注入后的应用分发请求。
  * @param {{ app: { handle: Function }, method: string, path: string, headers?: Record<string, string>, body?: unknown }} options - 分发参数。
- * @returns {{statusCode: number, body: unknown}} 响应结果。
+ * @returns {Promise<{statusCode: number, body: unknown}>} 响应结果。
  */
 function dispatchRequest({ app, method, path, headers = {}, body }) {
-  const req = {
-    method,
-    originalUrl: path,
-    headers,
-    body
-  };
-  const res = createResponse();
+  return new Promise((resolve, reject) => {
+    const req = {
+      method,
+      originalUrl: path,
+      headers,
+      body
+    };
+    const res = createResponse();
+    const originalJson = res.json;
+    let settled = false;
 
-  app.handle(req, res);
+    res.json = function patchedJson(payload) {
+      originalJson.call(this, payload);
 
-  return {
-    statusCode: res.statusCode,
-    body: res.body
-  };
+      if (!settled) {
+        settled = true;
+        resolve({
+          statusCode: res.statusCode,
+          body: res.body
+        });
+      }
+
+      return this;
+    };
+
+    app.handle(req, res, (error) => {
+      if (settled) {
+        return;
+      }
+
+      if (error) {
+        settled = true;
+        reject(error);
+        return;
+      }
+
+      settled = true;
+      resolve({
+        statusCode: res.statusCode,
+        body: res.body
+      });
+    });
+  });
 }
 
 test('createTelegramCommandService should identify supported command prefixes', () => {
@@ -241,12 +292,174 @@ test('createTelegramCommandService should identify supported command prefixes', 
   assert.equal(commandService.parseCommand('/unknown 1'), null);
 });
 
-test('POST /telegram/webhook should return 200 and unified success structure for a standard update payload', () => {
+test('createTelegramCommandService should dispatch /status to internal API after admin binding check', async () => {
+  const requestCalls = [];
+  const commandService = createTelegramCommandService({
+    configService: {
+      async getConfigs() {
+        return {
+          internal_api_base_url: 'http://internal.example.com',
+          internal_api_secret: 'test-secret'
+        };
+      }
+    },
+    internalApiServiceFactory() {
+      return {
+        async request(options) {
+          requestCalls.push(options);
+
+          if (options.path === '/api/internal/telegram/admin/by-chat/20001') {
+            return {
+              code: 0,
+              message: 'ok',
+              data: {
+                bound: true
+              }
+            };
+          }
+
+          return {
+            code: 0,
+            message: 'ok',
+            data: {
+              total_servers: 2
+            }
+          };
+        }
+      };
+    }
+  });
+
+  const result = await commandService.handleUpdate({
+    update_id: 123456789,
+    message: {
+      text: '/status',
+      chat: {
+        id: 20001,
+        type: 'private'
+      },
+      from: {
+        id: 30001,
+        username: 'task7_user',
+        first_name: 'Task7',
+        last_name: 'User'
+      }
+    }
+  });
+
+  assert.deepEqual(requestCalls, [
+    {
+      method: 'GET',
+      path: '/api/internal/telegram/admin/by-chat/20001',
+      parseAs: 'json'
+    },
+    {
+      method: 'GET',
+      path: '/api/internal/telegram/servers/health?chat_id=20001',
+      parseAs: 'json'
+    }
+  ]);
+  assert.equal(result.dispatch.ok, true);
+  assert.deepEqual(result.dispatch.request, {
+    method: 'GET',
+    path: '/api/internal/telegram/servers/health?chat_id=20001'
+  });
+});
+
+test('createTelegramCommandService should dispatch /bind directly to internal API bind verify endpoint', async () => {
+  const requestCalls = [];
+  const commandService = createTelegramCommandService({
+    configService: {
+      async getConfigs() {
+        return {
+          internal_api_base_url: 'http://internal.example.com',
+          internal_api_secret: 'test-secret'
+        };
+      }
+    },
+    internalApiServiceFactory() {
+      return {
+        async request(options) {
+          requestCalls.push(options);
+          return {
+            code: 0,
+            message: 'ok',
+            data: {
+              bound: true
+            }
+          };
+        }
+      };
+    }
+  });
+
+  const result = await commandService.handleUpdate({
+    update_id: 123456789,
+    message: {
+      text: '/bind TG-ADMIN-ABCD1234',
+      chat: {
+        id: 20001,
+        type: 'private'
+      },
+      from: {
+        id: 30001,
+        username: 'task7_user',
+        first_name: 'Task7',
+        last_name: 'User'
+      }
+    }
+  });
+
+  assert.equal(requestCalls.length, 1);
+  assert.deepEqual(requestCalls[0], {
+    method: 'POST',
+    path: '/api/internal/telegram/admin/bind/verify',
+    body: {
+      bind_code: 'TG-ADMIN-ABCD1234',
+      chat_id: '20001',
+      telegram_user_id: '30001',
+      telegram_username: 'task7_user',
+      telegram_first_name: 'Task7',
+      telegram_last_name: 'User'
+    },
+    parseAs: 'json'
+  });
+  assert.equal(result.dispatch.ok, true);
+});
+
+test('POST /telegram/webhook should return 200 and unified success structure for a standard update payload', async () => {
   const expressLib = createFakeExpress();
   const app = createApp({
-    expressLib
+    expressLib,
+    commandService: {
+      async handleUpdate(update) {
+        return {
+          processed: true,
+          updateId: update.update_id,
+          command: {
+            command: 'status',
+            argument: ''
+          },
+          dispatch: {
+            attempted: true,
+            ok: true,
+            request: {
+              method: 'GET',
+              path: '/api/internal/telegram/servers/health?chat_id=20001'
+            },
+            response: {
+              code: 0,
+              message: 'ok',
+              data: {
+                total_servers: 2
+              }
+            }
+          }
+        };
+      }
+    }
   });
-  const response = dispatchRequest({
+  const response = await dispatchRequest({
     app,
     method: 'POST',
     path: '/telegram/webhook',
@@ -278,6 +491,21 @@ test('POST /telegram/webhook should return 200 and unified success structure for
       command: {
         command: 'status',
         argument: ''
+      },
+      dispatch: {
+        attempted: true,
+        ok: true,
+        request: {
+          method: 'GET',
+          path: '/api/internal/telegram/servers/health?chat_id=20001'
+        },
+        response: {
+          code: 0,
+          message: 'ok',
+          data: {
+            total_servers: 2
+          }
+        }
       }
     }
   });

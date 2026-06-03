@@ -72,7 +72,11 @@ function createFakeExpress() {
             layerIndex += 1;
 
             if (layer.type === 'route') {
-              if (error || req.method !== layer.method || req._remainingPath !== layer.path) {
+              if (
+                error ||
+                req.method !== layer.method ||
+                (layer.path !== '*' && req._remainingPath !== layer.path)
+              ) {
                 continue;
               }
 
@@ -179,12 +183,20 @@ function createResponse() {
   return {
     statusCode: 200,
     body: null,
+    sentFilePath: '',
     status(statusCode) {
       this.statusCode = statusCode;
       return this;
     },
     json(payload) {
       this.body = payload;
+      return this;
+    },
+    sendFile(filePath) {
+      this.sentFilePath = filePath;
+      this.body = {
+        sentFile: filePath
+      };
       return this;
     },
     on() {}
@@ -246,6 +258,33 @@ test('createApp should mount injected adminRoutes when expressLib and adminRoute
       injected: true
     }
   });
+});
+
+test('GET /login should fall back to the built admin SPA entry instead of returning API 404', async () => {
+  const expressLib = createFakeExpress();
+
+  expressLib.static = function staticMiddleware() {
+    return (_req, _res, next) => next();
+  };
+
+  const app = createApp({
+    expressLib
+  });
+  const response = await dispatchRequest({
+    app,
+    method: 'GET',
+    path: '/login',
+    headers: {
+      accept: 'text/html'
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(
+    response.body.sentFile.endsWith('web\\dist\\index.html') ||
+      response.body.sentFile.endsWith('web/dist/index.html'),
+    true
+  );
 });
 
 test('GET /api/admin/config should return 401 when authorization header is missing', async () => {

@@ -23,14 +23,19 @@ function createWebhookController(dependencies = {}) {
    * 核心分支语义：始终将请求体交给命令服务做最小归一化；当前成功分支固定返回 200 与统一结构，满足 Telegram webhook 快速确认要求。
    * @param {import('express').Request & { body?: { update_id?: number } }} req - Express 请求对象，body 为 Telegram update 载荷。
    * @param {import('express').Response} res - Express 响应对象。
-   * @returns {void}
+   * @param {import('express').NextFunction} next - Express 下一个中间件。
+   * @returns {Promise<void>}
    */
-  function handleTelegramWebhook(req, res) {
-    const update = req.body || {};
-    const result = commandService.handleUpdate(update);
+  async function handleTelegramWebhook(req, res, next) {
+    try {
+      const update = req.body || {};
+      const result = await commandService.handleUpdate(update);
 
-    logger.info(`Webhook 回调处理完成，updateId=${result.updateId === null ? 'unknown' : result.updateId}`);
-    res.json(ok(result));
+      logger.info(`Webhook 回调处理完成，updateId=${result.updateId === null ? 'unknown' : result.updateId}`);
+      res.json(ok(result));
+    } catch (error) {
+      next(error);
+    }
   }
 
   return {

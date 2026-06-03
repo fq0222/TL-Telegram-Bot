@@ -3,6 +3,8 @@
  */
 const http = require('http');
 const https = require('https');
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const { createApp } = require('./app');
 const { loadServerEnv } = require('./config/env');
 const { createHttpsStateService } = require('./services/https-state-service');

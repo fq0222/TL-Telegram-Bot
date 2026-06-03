@@ -46,23 +46,27 @@ function createCertificateController(options = {}) {
    * @param {import('express').Response} res - Express 响应对象。
    * @returns {void}
    */
-  async function getCertificateStatus(_req, res) {
-    const config = await configService.getConfigs([
-      'selected_certificate_domain',
-      'tls_fullchain_path',
-      'tls_privkey_path'
-    ]);
-    const ready = Boolean(config.tls_fullchain_path && config.tls_privkey_path);
+  async function getCertificateStatus(_req, res, next) {
+    try {
+      const config = await configService.getConfigs([
+        'selected_certificate_domain',
+        'tls_fullchain_path',
+        'tls_privkey_path'
+      ]);
+      const ready = Boolean(config.tls_fullchain_path && config.tls_privkey_path);
 
-    logger.info('返回证书控制器骨架状态');
-    res.json(
-      ok({
-        ready,
-        selected_certificate_domain: config.selected_certificate_domain || '',
-        tls_fullchain_path: config.tls_fullchain_path || '',
-        tls_privkey_path: config.tls_privkey_path || ''
-      })
-    );
+      logger.info('返回证书控制器骨架状态');
+      res.json(
+        ok({
+          ready,
+          selected_certificate_domain: config.selected_certificate_domain || '',
+          tls_fullchain_path: config.tls_fullchain_path || '',
+          tls_privkey_path: config.tls_privkey_path || ''
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
   }
 
   /**
@@ -71,15 +75,19 @@ function createCertificateController(options = {}) {
    * @param {import('express').Response} res - Express 响应对象。
    * @returns {Promise<void>}
    */
-  async function listDomains(_req, res) {
-    const domains = await certificateService.listDomains();
+  async function listDomains(_req, res, next) {
+    try {
+      const domains = await certificateService.listDomains();
 
-    logger.info(`返回可用证书域名列表，数量=${domains.length}`);
-    res.json(
-      ok({
-        domains
-      })
-    );
+      logger.info(`返回可用证书域名列表，数量=${domains.length}`);
+      res.json(
+        ok({
+          domains
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
   }
 
   /**
@@ -89,33 +97,37 @@ function createCertificateController(options = {}) {
    * @param {import('express').Response} res - Express 响应对象。
    * @returns {Promise<void>}
    */
-  async function selectDomain(req, res) {
-    const domain = req.body && typeof req.body.domain === 'string' ? req.body.domain : '';
-    const result = await certificateService.activateDomain(domain);
-    const savedConfigEntries = [
-      {
-        key: 'selected_certificate_domain',
-        value: result.domain
-      },
-      {
-        key: 'tls_fullchain_path',
-        value: result.fullchainPath
-      },
-      {
-        key: 'tls_privkey_path',
-        value: result.privkeyPath
-      }
-    ];
+  async function selectDomain(req, res, next) {
+    try {
+      const domain = req.body && typeof req.body.domain === 'string' ? req.body.domain : '';
+      const result = await certificateService.activateDomain(domain);
+      const savedConfigEntries = [
+        {
+          key: 'selected_certificate_domain',
+          value: result.domain
+        },
+        {
+          key: 'tls_fullchain_path',
+          value: result.fullchainPath
+        },
+        {
+          key: 'tls_privkey_path',
+          value: result.privkeyPath
+        }
+      ];
 
-    await configService.saveConfigs(savedConfigEntries);
-    logger.info(`证书域名选择完成，domain=${result.domain}`);
-    res.json(
-      ok({
-        selected_certificate_domain: result.domain,
-        tls_fullchain_path: result.fullchainPath,
-        tls_privkey_path: result.privkeyPath
-      })
-    );
+      await configService.saveConfigs(savedConfigEntries);
+      logger.info(`证书域名选择完成，domain=${result.domain}`);
+      res.json(
+        ok({
+          selected_certificate_domain: result.domain,
+          tls_fullchain_path: result.fullchainPath,
+          tls_privkey_path: result.privkeyPath
+        })
+      );
+    } catch (error) {
+      next(error);
+    }
   }
 
   return {
