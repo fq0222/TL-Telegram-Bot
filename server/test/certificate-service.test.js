@@ -353,6 +353,69 @@ test('createCertificateService activateDomain 源证书 realpath 越界时应报
   assert.deepEqual(copyCalls, []);
 });
 
+test('createCertificateService activateDomain 目标文件尚不存在时应允许继续复制', async () => {
+  const ensureDirCalls = [];
+  const copyCalls = [];
+  const resolvedRealpaths = [];
+  const { createCertificateService } = loadWithMocks(path.resolve(__dirname, '../src/services/certificate-service.js'), {
+    '../utils/logger': createSilentLoggerModule()
+  });
+  const service = createCertificateService({
+    filesystemService: {
+      async exists() {
+        return true;
+      },
+      async resolveRealPath(targetPath) {
+        resolvedRealpaths.push(targetPath);
+
+        if (
+          targetPath === '/root/tlboot/alpha.example.com/fullchain.pem' ||
+          targetPath === '/root/tlboot/alpha.example.com/privkey.pem'
+        ) {
+          const error = new Error(`ENOENT: no such file or directory, realpath '${targetPath}'`);
+          error.code = 'ENOENT';
+          throw error;
+        }
+
+        return targetPath;
+      },
+      async ensureDir(targetPath) {
+        ensureDirCalls.push(targetPath);
+      },
+      async copyFile(from, to) {
+        copyCalls.push({ from, to });
+      }
+    },
+    pathResolver: {
+      resolvePath(inputPath) {
+        return inputPath === '~/.acme.sh' ? '/mock/home/.acme.sh' : inputPath;
+      }
+    }
+  });
+
+  const result = await service.activateDomain('alpha.example.com');
+
+  assert.deepEqual(ensureDirCalls, ['/root/tlboot/alpha.example.com']);
+  assert.ok(resolvedRealpaths.includes('/root/tlboot/alpha.example.com'));
+  assert.ok(resolvedRealpaths.includes('/root/tlboot/alpha.example.com/fullchain.pem'));
+  assert.ok(resolvedRealpaths.includes('/root/tlboot/alpha.example.com/privkey.pem'));
+  assert.deepEqual(copyCalls, [
+    {
+      from: '/mock/home/.acme.sh/alpha.example.com/fullchain.pem',
+      to: '/root/tlboot/alpha.example.com/fullchain.pem'
+    },
+    {
+      from: '/mock/home/.acme.sh/alpha.example.com/privkey.pem',
+      to: '/root/tlboot/alpha.example.com/privkey.pem'
+    }
+  ]);
+  assert.deepEqual(result, {
+    domain: 'alpha.example.com',
+    fullchainPath: '/root/tlboot/alpha.example.com/fullchain.pem',
+    privkeyPath: '/root/tlboot/alpha.example.com/privkey.pem'
+  });
+});
+
 test('createCertificateService activateDomain 目标文件 realpath 越界时应报错且不得复制', async () => {
   const ensureDirCalls = [];
   const copyCalls = [];

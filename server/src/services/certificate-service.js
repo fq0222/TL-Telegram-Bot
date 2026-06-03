@@ -77,6 +77,26 @@ function createCertificateService({
   }
 
   /**
+   * 校验真实路径，若目标文件尚不存在则回退为字符串路径校验。
+   * 核心分支语义：仅对“待创建的目标文件”容忍 ENOENT，避免复制前因 realpath 无法解析空文件而误判失败。
+   * @param {string} rootPath - 允许访问的根目录。
+   * @param {string} candidatePath - 待校验路径。
+   * @param {string} label - 用于日志和报错的路径标签。
+   * @returns {Promise<string>} 校验通过后的路径。
+   */
+  async function assertRealPathWithinRootOrAllowMissing(rootPath, candidatePath, label) {
+    try {
+      return await assertRealPathWithinRoot(rootPath, candidatePath, label);
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        return assertPathWithinRoot(rootPath, candidatePath, label);
+      }
+
+      throw error;
+    }
+  }
+
+  /**
    * 规范化并校验域名输入。
    * @param {string} domain - 待校验域名。
    * @returns {string} 规范化后的域名。
@@ -263,8 +283,16 @@ function createCertificateService({
    * @returns {Promise<void>} 校验通过后返回。
    */
   async function assertTargetFilePathsSafe(paths) {
-    await assertRealPathWithinRoot(normalizedTlsRootPath, paths.targetFullchainPath, 'certificate target');
-    await assertRealPathWithinRoot(normalizedTlsRootPath, paths.targetPrivkeyPath, 'certificate target');
+    await assertRealPathWithinRootOrAllowMissing(
+      normalizedTlsRootPath,
+      paths.targetFullchainPath,
+      'certificate target'
+    );
+    await assertRealPathWithinRootOrAllowMissing(
+      normalizedTlsRootPath,
+      paths.targetPrivkeyPath,
+      'certificate target'
+    );
   }
 
   /**
