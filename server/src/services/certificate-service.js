@@ -10,6 +10,7 @@ const logger = createLogger('CertificateService');
 const posixPath = path.posix;
 const DEFAULT_ACME_PATH = '~/.acme.sh';
 const DEFAULT_TLS_ROOT = '/root/tlboot';
+const ACME_DIRECTORY_SUFFIXES = ['', '_ecc', '_rsa'];
 
 /**
  * 创建证书服务。
@@ -39,7 +40,6 @@ function createCertificateService({
 
   /**
    * 校验路径字符串在规范化后是否仍位于允许根目录内。
-   * 核心分支语义：候选路径必须等于根目录，或以“根目录/”为前缀，否则视为路径越界。
    * @param {string} rootPath - 允许访问的根目录。
    * @param {string} candidatePath - 待校验路径。
    * @param {string} label - 用于日志和报错的路径标签。
@@ -62,7 +62,6 @@ function createCertificateService({
 
   /**
    * 校验真实路径解析后是否仍位于允许根目录内。
-   * 核心分支语义：若 realpath 解析结果越界，则说明存在符号链接或挂载跳转风险，应立即中止复制。
    * @param {string} rootPath - 允许访问的根目录。
    * @param {string} candidatePath - 待解析真实路径的候选路径。
    * @param {string} label - 用于日志和报错的路径标签。
@@ -78,58 +77,7 @@ function createCertificateService({
   }
 
   /**
-   * 构建域名对应的源证书路径与目标证书路径。
-   * @param {string} domain - 已通过校验的域名目录名。
-   * @returns {{
-   *   sourceDirectory: string,
-   *   sourceFullchainPath: string,
-   *   sourcePrivkeyPath: string,
-   *   targetDirectory: string,
-   *   targetFullchainPath: string,
-   *   targetPrivkeyPath: string
-   * }} 路径集合。
-   */
-  function buildDomainPaths(domain) {
-    const sourceDirectory = assertPathWithinRoot(
-      normalizedAcmeBasePath,
-      posixPath.join(normalizedAcmeBasePath, domain),
-      'certificate source'
-    );
-    const targetDirectory = assertPathWithinRoot(
-      normalizedTlsRootPath,
-      posixPath.join(normalizedTlsRootPath, domain),
-      'certificate target'
-    );
-
-    return {
-      sourceDirectory,
-      sourceFullchainPath: assertPathWithinRoot(
-        normalizedAcmeBasePath,
-        posixPath.join(sourceDirectory, 'fullchain.pem'),
-        'certificate source'
-      ),
-      sourcePrivkeyPath: assertPathWithinRoot(
-        normalizedAcmeBasePath,
-        posixPath.join(sourceDirectory, 'privkey.pem'),
-        'certificate source'
-      ),
-      targetDirectory,
-      targetFullchainPath: assertPathWithinRoot(
-        normalizedTlsRootPath,
-        posixPath.join(targetDirectory, 'fullchain.pem'),
-        'certificate target'
-      ),
-      targetPrivkeyPath: assertPathWithinRoot(
-        normalizedTlsRootPath,
-        posixPath.join(targetDirectory, 'privkey.pem'),
-        'certificate target'
-      )
-    };
-  }
-
-  /**
    * 规范化并校验域名输入。
-   * 核心分支语义：除空白值外，还拒绝路径分隔符、连续点、前导点和空段，避免目录逃逸。
    * @param {string} domain - 待校验域名。
    * @returns {string} 规范化后的域名。
    */
@@ -156,18 +104,137 @@ function createCertificateService({
   }
 
   /**
-   * 判断域名目录是否同时具备完整证书和私钥。
-   * @param {string} domain - 域名目录名。
-   * @returns {Promise<boolean>} 是否具备双证书文件。
+   * 将 ACME 目录名转换为域名。
+   * 核心分支语义：优先兼容 acme.sh 常见的 `_ecc` 与 `_rsa` 后缀目录名。
+   * @param {string} directoryName - ACME 目录名。
+   * @returns {string} 规范化后的域名。
    */
-  async function hasRequiredCertificates(domain) {
-    const { sourceFullchainPath, sourcePrivkeyPath } = buildDomainPaths(domain);
-    const [hasFullchain, hasPrivkey] = await Promise.all([
-      filesystemService.exists(sourceFullchainPath),
-      filesystemService.exists(sourcePrivkeyPath)
-    ]);
+  function mapDirectoryNameToDomain(directoryName) {
+    if (directoryName.endsWith('_ecc')) {
+      return directoryName.slice(0, -4);
+    }
 
-    return hasFullchain && hasPrivkey;
+    if (directoryName.endsWith('_rsa')) {
+      return directoryName.slice(0, -4);
+    }
+
+    return directoryName;
+  }
+
+  /**
+   * 构建域名在 ACME 目录中的候选子目录列表。
+   * @param {string} domain - 规范化后的域名。
+   * @returns {string[]} 候选目录名列表。
+   */
+  function buildSourceDirectoryCandidates(domain) {
+    return ACME_DIRECTORY_SUFFIXES.map((suffix) => `${domain}${suffix}`);
+  }
+
+  /**
+   * 构建目标 TLS 证书路径。
+   * @param {string} domain - 规范化后的域名。
+   * @returns {{
+   *   targetDirectory: string,
+   *   targetFullchainPath: string,
+   *   targetPrivkeyPath: string
+   * }} 目标路径集合。
+   */
+  function buildTargetPaths(domain) {
+    const targetDirectory = assertPathWithinRoot(
+      normalizedTlsRootPath,
+      posixPath.join(normalizedTlsRootPath, domain),
+      'certificate target'
+    );
+
+    return {
+      targetDirectory,
+      targetFullchainPath: assertPathWithinRoot(
+        normalizedTlsRootPath,
+        posixPath.join(targetDirectory, 'fullchain.pem'),
+        'certificate target'
+      ),
+      targetPrivkeyPath: assertPathWithinRoot(
+        normalizedTlsRootPath,
+        posixPath.join(targetDirectory, 'privkey.pem'),
+        'certificate target'
+      )
+    };
+  }
+
+  /**
+   * 构建某个源目录下可兼容的证书文件候选组合。
+   * 核心分支语义：同时兼容旧版 `fullchain.pem + privkey.pem` 和 acme.sh 的 `fullchain.cer + 域名.key`。
+   * @param {string} sourceDirectory - 已校验的 ACME 证书目录。
+   * @param {string} domain - 规范化后的域名。
+   * @returns {Array<{ sourceFullchainPath: string, sourcePrivkeyPath: string }>} 候选证书文件组合。
+   */
+  function buildSourceFileCandidates(sourceDirectory, domain) {
+    return [
+      {
+        sourceFullchainPath: assertPathWithinRoot(
+          normalizedAcmeBasePath,
+          posixPath.join(sourceDirectory, 'fullchain.pem'),
+          'certificate source'
+        ),
+        sourcePrivkeyPath: assertPathWithinRoot(
+          normalizedAcmeBasePath,
+          posixPath.join(sourceDirectory, 'privkey.pem'),
+          'certificate source'
+        )
+      },
+      {
+        sourceFullchainPath: assertPathWithinRoot(
+          normalizedAcmeBasePath,
+          posixPath.join(sourceDirectory, 'fullchain.cer'),
+          'certificate source'
+        ),
+        sourcePrivkeyPath: assertPathWithinRoot(
+          normalizedAcmeBasePath,
+          posixPath.join(sourceDirectory, `${domain}.key`),
+          'certificate source'
+        )
+      }
+    ];
+  }
+
+  /**
+   * 在 ACME 根目录下解析域名对应的可用源证书路径。
+   * 核心分支语义：按目录后缀优先级依次尝试，找到首组完整证书后立即返回。
+   * @param {string} domain - 规范化后的域名。
+   * @returns {Promise<null | {
+   *   sourceDirectory: string,
+   *   sourceFullchainPath: string,
+   *   sourcePrivkeyPath: string
+   * }>} 可用证书路径；未找到时返回 null。
+   */
+  async function resolveSourcePaths(domain) {
+    const candidateDirectories = buildSourceDirectoryCandidates(domain);
+
+    for (const directoryName of candidateDirectories) {
+      const sourceDirectory = assertPathWithinRoot(
+        normalizedAcmeBasePath,
+        posixPath.join(normalizedAcmeBasePath, directoryName),
+        'certificate source'
+      );
+      const fileCandidates = buildSourceFileCandidates(sourceDirectory, domain);
+
+      for (const fileCandidate of fileCandidates) {
+        const [hasFullchain, hasPrivkey] = await Promise.all([
+          filesystemService.exists(fileCandidate.sourceFullchainPath),
+          filesystemService.exists(fileCandidate.sourcePrivkeyPath)
+        ]);
+
+        if (hasFullchain && hasPrivkey) {
+          return {
+            sourceDirectory,
+            sourceFullchainPath: fileCandidate.sourceFullchainPath,
+            sourcePrivkeyPath: fileCandidate.sourcePrivkeyPath
+          };
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -183,7 +250,6 @@ function createCertificateService({
 
   /**
    * 校验目标目录真实路径安全性。
-   * 核心分支语义：目录创建后立即校验 realpath，及时识别 `/root/tlboot/<domain>` 或其祖先链路中的符号链接跳转。
    * @param {string} targetDirectory - 待校验目标目录。
    * @returns {Promise<void>} 校验通过后返回。
    */
@@ -193,7 +259,6 @@ function createCertificateService({
 
   /**
    * 校验目标证书文件真实路径安全性。
-   * 核心分支语义：即使目标目录安全，也要逐个确认目标文件未通过既有符号链接指向根目录外，无法确认时拒绝复制。
    * @param {{ targetFullchainPath: string, targetPrivkeyPath: string }} paths - 待校验目标文件路径集合。
    * @returns {Promise<void>} 校验通过后返回。
    */
@@ -204,7 +269,7 @@ function createCertificateService({
 
   /**
    * 扫描可用域名。
-   * 核心分支语义：仅返回同时存在 `fullchain.pem` 与 `privkey.pem` 的一级目录。
+   * 核心分支语义：兼容 acme.sh 的 `_ecc/_rsa` 目录，并对同一域名去重。
    * @returns {Promise<string[]>} 可用域名列表。
    */
   async function listDomains() {
@@ -223,10 +288,18 @@ function createCertificateService({
     }
 
     const domains = [];
+    const seenDomains = new Set();
 
     for (const directory of directories) {
-      if (await hasRequiredCertificates(directory)) {
-        domains.push(directory);
+      const domain = mapDirectoryNameToDomain(directory);
+
+      if (seenDomains.has(domain)) {
+        continue;
+      }
+
+      if (await resolveSourcePaths(domain)) {
+        domains.push(domain);
+        seenDomains.add(domain);
       }
     }
 
@@ -242,35 +315,25 @@ function createCertificateService({
    */
   async function activateDomain(domain) {
     const normalizedDomain = normalizeDomain(domain);
-    const {
-      sourceDirectory,
-      sourceFullchainPath,
-      sourcePrivkeyPath,
-      targetDirectory,
-      targetFullchainPath,
-      targetPrivkeyPath
-    } = buildDomainPaths(normalizedDomain);
+    const sourcePaths = await resolveSourcePaths(normalizedDomain);
+    const { targetDirectory, targetFullchainPath, targetPrivkeyPath } = buildTargetPaths(normalizedDomain);
 
     logger.info(`开始激活域名证书：${normalizedDomain}`);
 
-    if (!(await hasRequiredCertificates(normalizedDomain))) {
+    if (!sourcePaths) {
       logger.error(`激活域名证书失败，源证书缺失：${normalizedDomain}`);
       throw new Error(`Certificate files are incomplete for domain: ${normalizedDomain}`);
     }
 
-    await assertSourcePathsSafe({
-      sourceDirectory,
-      sourceFullchainPath,
-      sourcePrivkeyPath
-    });
+    await assertSourcePathsSafe(sourcePaths);
     await filesystemService.ensureDir(targetDirectory);
     await assertTargetDirectorySafe(targetDirectory);
     await assertTargetFilePathsSafe({
       targetFullchainPath,
       targetPrivkeyPath
     });
-    await filesystemService.copyFile(sourceFullchainPath, targetFullchainPath);
-    await filesystemService.copyFile(sourcePrivkeyPath, targetPrivkeyPath);
+    await filesystemService.copyFile(sourcePaths.sourceFullchainPath, targetFullchainPath);
+    await filesystemService.copyFile(sourcePaths.sourcePrivkeyPath, targetPrivkeyPath);
 
     logger.info(`域名证书激活完成：${normalizedDomain}`);
     return {
