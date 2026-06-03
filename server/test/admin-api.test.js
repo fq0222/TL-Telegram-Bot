@@ -406,6 +406,9 @@ test('POST /api/admin/auth/login should validate persisted admin credentials fro
     app,
     method: 'POST',
     path: '/api/admin/auth/login',
+    headers: {
+      'x-forwarded-for': '203.0.113.20'
+    },
     body: {
       username: 'owner',
       password: 'Owner#123'
@@ -415,6 +418,9 @@ test('POST /api/admin/auth/login should validate persisted admin credentials fro
     app,
     method: 'POST',
     path: '/api/admin/auth/login',
+    headers: {
+      'x-forwarded-for': '203.0.113.21'
+    },
     body: {
       username: 'owner',
       password: 'wrong-password'
@@ -1233,4 +1239,115 @@ test('POST /api/admin/webhook/register and GET /api/admin/status/overview should
       webhook_last_error_message: ''
     }
   });
+});
+
+test('POST /api/admin/auth/login should reject repeated login attempts within 30 minutes in strict mode', async () => {
+  const expressLib = createFakeExpress();
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService: createAdminAuthService({
+        devAuth: {
+          username: 'admin',
+          password: 'admin123456',
+          token: 'strict-token',
+          adminId: 'strict-admin',
+          sessionId: 'strict-session',
+          tokenType: 'Bearer'
+        }
+      })
+    })
+  });
+  const firstResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    headers: {
+      'x-forwarded-for': '203.0.113.10'
+    },
+    body: {
+      username: 'admin',
+      password: 'admin123456'
+    }
+  });
+  const secondResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    headers: {
+      'x-forwarded-for': '203.0.113.10'
+    },
+    body: {
+      username: 'admin',
+      password: 'admin123456'
+    }
+  });
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(secondResponse.statusCode, 429);
+  assert.equal(secondResponse.body?.code, 429);
+  assert.equal(secondResponse.body?.message.includes('30分钟'), true);
+  assert.equal(typeof secondResponse.body?.data?.retryAfterSeconds, 'number');
+});
+
+test('createApp should mount admin routes and SPA under configured 32-character access path', async () => {
+  const expressLib = createFakeExpress();
+
+  expressLib.static = function staticMiddleware() {
+    return (_req, _res, next) => next();
+  };
+
+  const app = createApp({
+    expressLib,
+    adminAccessPath: '0123456789abcdef0123456789abcdef',
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService: createAdminAuthService({
+        devAuth: {
+          username: 'admin',
+          password: 'admin123456',
+          token: 'hidden-token',
+          adminId: 'hidden-admin',
+          sessionId: 'hidden-session',
+          tokenType: 'Bearer'
+        }
+      })
+    })
+  });
+  const hiddenLoginPageResponse = await dispatchRequest({
+    app,
+    method: 'GET',
+    path: '/0123456789abcdef0123456789abcdef/login',
+    headers: {
+      accept: 'text/html'
+    }
+  });
+  const hiddenLoginApiResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/0123456789abcdef0123456789abcdef/api/admin/auth/login',
+    body: {
+      username: 'admin',
+      password: 'admin123456'
+    }
+  });
+  const publicLoginApiResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    body: {
+      username: 'admin',
+      password: 'admin123456'
+    }
+  });
+
+  assert.equal(hiddenLoginPageResponse.statusCode, 200);
+  assert.equal(
+    hiddenLoginPageResponse.body.sentFile.endsWith('web\\dist\\index.html') ||
+      hiddenLoginPageResponse.body.sentFile.endsWith('web/dist/index.html'),
+    true
+  );
+  assert.equal(hiddenLoginApiResponse.statusCode, 200);
+  assert.equal(publicLoginApiResponse.statusCode, 404);
 });

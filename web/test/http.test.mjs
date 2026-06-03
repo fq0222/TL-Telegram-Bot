@@ -1,15 +1,16 @@
 /**
  * 概述：覆盖管理员前端 HTTP 客户端在 401 未授权场景下的退出登录与跳转行为，
- * 确保会话过期后页面能够及时清理本地 token 并返回登录页。
+ * 确保隐藏路径模式下会话过期后也能清理本地 token 并返回秘密登录页。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('http client should clear admin token and redirect to /login on 401 response', async () => {
+test('http client should clear admin token and redirect to hidden login route on 401 response', async () => {
   const storage = new Map([['tl-telegram-bot-admin-token', 'expired-token']]);
+  const secretBasePath = '/0123456789abcdef0123456789abcdef';
   const locationState = {
-    pathname: '/config',
-    href: '/config'
+    pathname: `${secretBasePath}/config`,
+    href: `${secretBasePath}/config`
   };
 
   global.window = {
@@ -55,7 +56,7 @@ test('http client should clear admin token and redirect to /login on 401 respons
 
   const { http, getAdminToken } = await import(`../src/api/http.js?test=${Date.now()}`);
 
-  await assert.rejects(() => http.get('/api/admin/config'), /未授权访问/);
+  await assert.rejects(() => http.get('/config'), /未授权访问/);
   assert.equal(getAdminToken(), '');
-  assert.equal(locationState.href, '/login');
+  assert.equal(locationState.href, `${secretBasePath}/login`);
 });

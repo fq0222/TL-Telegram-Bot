@@ -5,9 +5,11 @@ import ConfigView from '../views/ConfigView.vue';
 import LoginView from '../views/LoginView.vue';
 import WebhookView from '../views/WebhookView.vue';
 import { getAdminToken } from '../api/http.js';
+import { getAdminBasePath } from '../utils/admin-base-path.js';
 
 /**
- * 概述：定义管理员前端基础路由，按页面职责拆分登录、概览、配置、证书和 Webhook 管理入口。
+ * 概述：定义管理员前端基础路由，
+ * 在隐藏路径模式下使用动态 history base，确保页面导航始终停留在秘密入口之下。
  */
 const routes = [
   { path: '/', redirect: '/dashboard' },
@@ -33,17 +35,11 @@ const routes = [
   { path: '/webhook', name: 'webhook', component: WebhookView, meta: { title: 'Webhook 管理' } }
 ];
 
-/**
- * 概述：创建 Vue Router 实例，当前使用 history 模式，供后续管理员路由守卫扩展。
- */
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(getAdminBasePath()),
   routes
 });
 
-/**
- * 概述：管理员路由守卫，未登录时统一跳转到登录页；已登录访问登录页时回退到概览页。
- */
 router.beforeEach((to) => {
   const token = getAdminToken();
   const isPublicRoute = Boolean(to.meta && to.meta.public);

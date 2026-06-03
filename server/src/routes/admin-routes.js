@@ -1,5 +1,6 @@
 /**
- * 概述：聚合管理员认证与配置相关路由，当前提供最小登录与配置读取接口，并确保配置接口默认走鉴权。
+ * 概述：聚合管理员认证与配置相关路由，
+ * 统一注入认证、登录冷却、证书与 Telegram 状态等依赖，保持管理端入口清晰稳定。
  */
 const { createAdminAuthController } = require('../controllers/admin-auth-controller');
 const { createAdminConfigController } = require('../controllers/admin-config-controller');
@@ -7,6 +8,7 @@ const { createCertificateController } = require('../controllers/certificate-cont
 const { createStatusController } = require('../controllers/status-controller');
 const { createAdminAuthMiddleware } = require('../middlewares/admin-auth-middleware');
 const { createAdminAuthService } = require('../services/admin-auth-service');
+const { createAdminLoginAttemptService } = require('../services/admin-login-attempt-service');
 const { createConfigService } = require('../services/config-service');
 const { createConfigRepository } = require('../repositories/config-repository');
 const { createSessionRepository } = require('../repositories/session-repository');
@@ -18,13 +20,13 @@ let runtimeAdminServices = null;
 
 /**
  * 创建运行期管理员依赖。
- * 核心分支语义：优先初始化 SQLite 配置服务；若初始化失败，则回退到最小空实现，避免开发环境直接因配置层未就绪而阻断路由加载。
  * @returns {{
  *   authService: { login: Function, verifyToken: Function, getCredentialProfile?: Function, updateCredentials?: Function },
+ *   loginAttemptService: { assertAttemptAllowed: Function, registerAttempt: Function },
  *   configService: { getConfigs: Function, saveConfigs: Function },
- *   sessionRepository: { saveSession: Function, getSession: Function },
+ *   sessionRepository: { saveSession: Function, getSession: Function } | null,
  *   certificateService: { listDomains: Function, activateDomain: Function },
- *   telegramApiService: { setWebhook: Function }
+ *   telegramApiService: { setWebhook: Function, getWebhookInfo: Function }
  * }} 运行期依赖集合。
  */
 function getRuntimeAdminServices() {
@@ -41,6 +43,7 @@ function getRuntimeAdminServices() {
     runtimeAdminServices = {
       configService,
       authService: null,
+      loginAttemptService: createAdminLoginAttemptService(),
       sessionRepository,
       certificateService: createCertificateService(),
       telegramApiService: createTelegramApiService({
@@ -55,6 +58,7 @@ function getRuntimeAdminServices() {
   } catch (_error) {
     runtimeAdminServices = {
       authService: null,
+      loginAttemptService: createAdminLoginAttemptService(),
       sessionRepository: null,
       configService: {
         async saveConfigs() {
@@ -82,8 +86,16 @@ function getRuntimeAdminServices() {
 
 /**
  * 创建管理员路由。
- * 核心分支语义：登录接口始终匿名可访问；配置读取接口必须经过管理员鉴权中间件，保持最小安全边界。
- * @param {{ expressLib?: Function & { Router?: Function }, authService?: { login: Function, verifyToken: Function }, configService?: { getConfigs: Function, saveConfigs: Function }, sessionRepository?: { saveSession: Function, getSession: Function }, certificateService?: { listDomains: Function, activateDomain: Function }, telegramApiService?: { setWebhook: Function } }} [options] - 路由依赖。
+ * @param {{
+ *   expressLib?: Function & { Router?: Function },
+ *   authService?: { login: Function, verifyToken: Function, getCredentialProfile?: Function, updateCredentials?: Function },
+ *   loginAttemptService?: { assertAttemptAllowed?: Function, registerAttempt?: Function },
+ *   configService?: { getConfigs: Function, saveConfigs: Function },
+ *   sessionRepository?: { saveSession: Function, getSession: Function } | null,
+ *   certificateService?: { listDomains: Function, activateDomain: Function },
+ *   telegramApiService?: { setWebhook: Function, getWebhookInfo: Function },
+ *   devAuth?: { token?: string, adminId?: string, sessionId?: string, tokenType?: string }
+ * }} [options] - 路由依赖。
  * @returns {import('express').Router | {post: Function, get: Function}} 管理员路由实例。
  */
 function createAdminRoutes(options = {}) {
@@ -92,6 +104,11 @@ function createAdminRoutes(options = {}) {
   const runtimeServices = getRuntimeAdminServices();
   const configService = options.configService || runtimeServices.configService;
   const sessionRepository = options.sessionRepository || runtimeServices.sessionRepository;
+  const loginAttemptService =
+    options.loginAttemptService ||
+    (options.authService || options.devAuth
+      ? createAdminLoginAttemptService()
+      : runtimeServices.loginAttemptService);
   const authService =
     options.authService ||
     createAdminAuthService({
@@ -99,7 +116,10 @@ function createAdminRoutes(options = {}) {
       configService,
       sessionRepository
     });
-  const adminAuthController = createAdminAuthController({ authService });
+  const adminAuthController = createAdminAuthController({
+    authService,
+    loginAttemptService
+  });
   const certificateService = options.certificateService || runtimeServices.certificateService;
   const telegramApiService = options.telegramApiService || runtimeServices.telegramApiService;
   const adminConfigController = createAdminConfigController({ configService });
