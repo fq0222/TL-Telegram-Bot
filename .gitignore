@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Local SQLite artifacts
 server/data/*.sqlite
+
+# Local code index artifacts
+.codegraph/
