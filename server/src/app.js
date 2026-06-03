@@ -6,13 +6,14 @@ const { notFoundHandler } = require('./middlewares/not-found-handler');
 const { errorHandler } = require('./middlewares/error-handler');
 const { createLogger } = require('./utils/logger');
 const { ok } = require('./utils/response');
+const { createWebhookRoutes } = require('./routes/webhook-routes');
 
 const logger = createLogger('App');
 
 /**
  * 创建 Express 应用实例。
- * 核心分支语义：默认惰性加载真实 express 与管理员路由；测试可通过 options 注入 expressLib 与 adminRoutes，避免依赖外部安装状态。
- * @param {{ expressLib?: Function & { json?: Function }, adminRoutes?: unknown }} [options] - 应用依赖注入项。
+ * 核心分支语义：默认惰性加载真实 express、管理员路由与 webhook 路由；测试可通过 options 注入依赖，避免依赖外部安装状态。
+ * @param {{ expressLib?: Function & { json?: Function }, adminRoutes?: unknown, webhookRoutes?: unknown, commandService?: { handleUpdate: Function }, devAuth?: { token?: string, adminId?: string, sessionId?: string, tokenType?: string } }} [options] - 应用依赖注入项。
  * @returns {import('express').Express | {use: Function, get: Function}} 配置好的应用实例。
  */
 function createApp(options = {}) {
@@ -23,12 +24,19 @@ function createApp(options = {}) {
       expressLib,
       devAuth: options.devAuth
     });
+  const webhookRoutes =
+    options.webhookRoutes ||
+    createWebhookRoutes({
+      expressLib,
+      commandService: options.commandService
+    });
   const app = expressLib();
 
   logger.info('开始创建 Express 应用实例');
   app.use(expressLib.json({ limit: '1mb' }));
   app.use(requestLogger);
   app.use('/api/admin', adminRoutes);
+  app.use('/telegram', webhookRoutes);
 
   /**
    * 健康检查接口，用于确认最小服务已成功启动。
