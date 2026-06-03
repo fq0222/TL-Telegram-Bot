@@ -12,7 +12,7 @@ const logger = createLogger('InternalApiService');
  * @param {{ baseUrl: string, secret: string, fetchImpl: Function, now?: Function }} options - 客户端依赖与配置。
  * @returns {{ request: Function }} 暴露最小 request 方法的内部接口客户端。
  */
-function createInternalApiService({ baseUrl, secret, fetchImpl, now = () => Date.now() }) {
+function createInternalApiService({ baseUrl, secret, fetchImpl, now = () => Math.floor(Date.now() / 1000) }) {
   if (typeof baseUrl !== 'string' || baseUrl === '') {
     throw new Error('Internal API baseUrl is required');
   }

@@ -87,6 +87,52 @@ test('createInternalApiService should call fetchImpl and inject internal signatu
   );
 });
 
+test('createInternalApiService should use second-level timestamp by default when now is not injected', async () => {
+  const realDateNow = Date.now;
+  const fetchCalls = [];
+
+  Date.now = () => 1717400000123;
+
+  try {
+    const service = createInternalApiService({
+      baseUrl: 'https://bot.example.com',
+      secret: 'task4-secret',
+      fetchImpl: async (url, options) => {
+        fetchCalls.push({ url, options });
+        return {
+          ok: true,
+          status: 200,
+          headers: {
+            get(name) {
+              return String(name).toLowerCase() === 'content-type' ? 'application/json; charset=utf-8' : null;
+            }
+          },
+          async json() {
+            return { success: true };
+          }
+        };
+      }
+    });
+
+    await service.request({
+      method: 'GET',
+      path: '/internal/default-timestamp'
+    });
+  } finally {
+    Date.now = realDateNow;
+  }
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].options.headers['X-Internal-Timestamp'], '1717400000');
+  assert.equal(
+    fetchCalls[0].options.headers['X-Internal-Signature'],
+    crypto
+      .createHmac('sha256', 'task4-secret')
+      .update('GET\n/internal/default-timestamp\n1717400000\n')
+      .digest('hex')
+  );
+});
+
 test('createInternalApiService should return null for 204 empty response', async () => {
   const service = createInternalApiService({
     baseUrl: 'https://bot.example.com',
