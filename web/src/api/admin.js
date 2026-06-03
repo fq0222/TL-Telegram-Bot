@@ -14,6 +14,23 @@ export function loginAdmin(payload) {
 }
 
 /**
+ * 获取当前管理员登录凭据概要。
+ * @returns {Promise<any>} 当前管理员用户名响应。
+ */
+export function fetchAdminCredentials() {
+  return http.get('/api/admin/auth/credentials');
+}
+
+/**
+ * 更新当前管理员登录凭据。
+ * @param {{ username: string, currentPassword: string, newPassword: string }} payload - 凭据修改载荷。
+ * @returns {Promise<any>} 凭据更新响应。
+ */
+export function updateAdminCredentials(payload) {
+  return http.put('/api/admin/auth/credentials', payload);
+}
+
+/**
  * 获取管理员配置骨架。
  * @returns {Promise<any>} 配置接口响应。
  */

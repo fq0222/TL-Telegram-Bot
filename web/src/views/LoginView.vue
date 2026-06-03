@@ -10,7 +10,7 @@
       <form class="auth-view__form" @submit.prevent="handleLogin">
         <label class="field">
           <span class="field__label">用户名</span>
-          <input v-model="form.username" class="field__input" type="text" placeholder="admin" />
+          <input v-model="form.username" class="field__input" type="text" placeholder="请输入管理员用户名" />
         </label>
         <label class="field">
           <span class="field__label">密码</span>
@@ -42,11 +42,11 @@ import { setAdminToken } from '../api/http.js';
  */
 const router = useRouter();
 const form = reactive({
-  username: 'admin',
-  password: 'dev-password'
+  username: '',
+  password: ''
 });
 const submitting = ref(false);
-const message = ref('默认会尝试请求当前服务端的开发期登录接口。');
+const message = ref('请输入管理员账号和密码后登录控制台。');
 const messageTone = ref('muted');
 
 /**

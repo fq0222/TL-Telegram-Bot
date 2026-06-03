@@ -9,6 +9,7 @@ const { createAdminAuthMiddleware } = require('../middlewares/admin-auth-middlew
 const { createAdminAuthService } = require('../services/admin-auth-service');
 const { createConfigService } = require('../services/config-service');
 const { createConfigRepository } = require('../repositories/config-repository');
+const { createSessionRepository } = require('../repositories/session-repository');
 const { createDatabase } = require('../config/database');
 const { createCertificateService } = require('../services/certificate-service');
 const { createTelegramApiService } = require('../services/telegram-api-service');
@@ -19,7 +20,9 @@ let runtimeAdminServices = null;
  * 创建运行期管理员依赖。
  * 核心分支语义：优先初始化 SQLite 配置服务；若初始化失败，则回退到最小空实现，避免开发环境直接因配置层未就绪而阻断路由加载。
  * @returns {{
+ *   authService: { login: Function, verifyToken: Function, getCredentialProfile?: Function, updateCredentials?: Function },
  *   configService: { getConfigs: Function, saveConfigs: Function },
+ *   sessionRepository: { saveSession: Function, getSession: Function },
  *   certificateService: { listDomains: Function, activateDomain: Function },
  *   telegramApiService: { setWebhook: Function }
  * }} 运行期依赖集合。
@@ -32,16 +35,25 @@ function getRuntimeAdminServices() {
   try {
     const database = createDatabase();
     const configRepository = createConfigRepository({ database });
+    const sessionRepository = createSessionRepository({ database });
 
     runtimeAdminServices = {
       configService: createConfigService({ repository: configRepository }),
+      authService: null,
+      sessionRepository,
       certificateService: createCertificateService(),
       telegramApiService: createTelegramApiService({
         botToken: process.env.TELEGRAM_BOT_TOKEN
       })
     };
+    runtimeAdminServices.authService = createAdminAuthService({
+      configService: runtimeAdminServices.configService,
+      sessionRepository: runtimeAdminServices.sessionRepository
+    });
   } catch (_error) {
     runtimeAdminServices = {
+      authService: null,
+      sessionRepository: null,
       configService: {
         async saveConfigs() {
           return [];
@@ -58,6 +70,9 @@ function getRuntimeAdminServices() {
         botToken: process.env.TELEGRAM_BOT_TOKEN
       })
     };
+    runtimeAdminServices.authService = createAdminAuthService({
+      configService: runtimeAdminServices.configService
+    });
   }
 
   return runtimeAdminServices;
@@ -66,16 +81,23 @@ function getRuntimeAdminServices() {
 /**
  * 创建管理员路由。
  * 核心分支语义：登录接口始终匿名可访问；配置读取接口必须经过管理员鉴权中间件，保持最小安全边界。
- * @param {{ expressLib?: Function & { Router?: Function }, authService?: { login: Function, verifyToken: Function }, configService?: { getConfigs: Function, saveConfigs: Function }, certificateService?: { listDomains: Function, activateDomain: Function }, telegramApiService?: { setWebhook: Function } }} [options] - 路由依赖。
+ * @param {{ expressLib?: Function & { Router?: Function }, authService?: { login: Function, verifyToken: Function }, configService?: { getConfigs: Function, saveConfigs: Function }, sessionRepository?: { saveSession: Function, getSession: Function }, certificateService?: { listDomains: Function, activateDomain: Function }, telegramApiService?: { setWebhook: Function } }} [options] - 路由依赖。
  * @returns {import('express').Router | {post: Function, get: Function}} 管理员路由实例。
  */
 function createAdminRoutes(options = {}) {
   const expressLib = options.expressLib || require('express');
   const router = expressLib.Router();
   const runtimeServices = getRuntimeAdminServices();
-  const authService = options.authService || createAdminAuthService({ devAuth: options.devAuth });
-  const adminAuthController = createAdminAuthController({ authService });
   const configService = options.configService || runtimeServices.configService;
+  const sessionRepository = options.sessionRepository || runtimeServices.sessionRepository;
+  const authService =
+    options.authService ||
+    createAdminAuthService({
+      devAuth: options.devAuth,
+      configService,
+      sessionRepository
+    });
+  const adminAuthController = createAdminAuthController({ authService });
   const certificateService = options.certificateService || runtimeServices.certificateService;
   const telegramApiService = options.telegramApiService || runtimeServices.telegramApiService;
   const adminConfigController = createAdminConfigController({ configService });
@@ -90,6 +112,8 @@ function createAdminRoutes(options = {}) {
   const adminAuthMiddleware = createAdminAuthMiddleware({ authService });
 
   router.post('/auth/login', adminAuthController.login);
+  router.get('/auth/credentials', adminAuthMiddleware, adminAuthController.getCredentials);
+  router.put('/auth/credentials', adminAuthMiddleware, adminAuthController.updateCredentials);
   router.get('/config', adminAuthMiddleware, adminConfigController.getConfig);
   router.put('/config', adminAuthMiddleware, adminConfigController.saveConfig);
   router.get('/certificates/status', adminAuthMiddleware, certificateController.getCertificateStatus);

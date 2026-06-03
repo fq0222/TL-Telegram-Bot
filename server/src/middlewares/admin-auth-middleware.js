@@ -42,27 +42,31 @@ function createAdminAuthMiddleware(options = {}) {
    * @param {import('express').NextFunction} next - 认证通过后继续执行后续路由。
    * @returns {void}
    */
-  return function adminAuthMiddleware(req, res, next) {
-    const authorizationHeader = req.headers.authorization;
-    const token = extractBearerToken(authorizationHeader);
+  return async function adminAuthMiddleware(req, res, next) {
+    try {
+      const authorizationHeader = req.headers.authorization;
+      const token = extractBearerToken(authorizationHeader);
 
-    if (!token) {
-      logger.warn(`管理员接口缺少有效 Authorization 请求头 path=${req.originalUrl}`);
-      res.status(401).json(fail(401, '未授权访问'));
-      return;
+      if (!token) {
+        logger.warn(`管理员接口缺少有效 Authorization 请求头 path=${req.originalUrl}`);
+        res.status(401).json(fail(401, '未授权访问'));
+        return;
+      }
+
+      const authResult = await authService.verifyToken(token);
+
+      if (!authResult) {
+        logger.warn(`管理员接口 token 无效 path=${req.originalUrl}`);
+        res.status(401).json(fail(401, '未授权访问'));
+        return;
+      }
+
+      req.adminAuth = authResult;
+      logger.info(`管理员接口鉴权通过 path=${req.originalUrl} adminId=${authResult.adminId}`);
+      next();
+    } catch (error) {
+      next(error);
     }
-
-    const authResult = authService.verifyToken(token);
-
-    if (!authResult) {
-      logger.warn(`管理员接口 token 无效 path=${req.originalUrl}`);
-      res.status(401).json(fail(401, '未授权访问'));
-      return;
-    }
-
-    req.adminAuth = authResult;
-    logger.info(`管理员接口鉴权通过 path=${req.originalUrl} adminId=${authResult.adminId}`);
-    next();
   };
 }
 

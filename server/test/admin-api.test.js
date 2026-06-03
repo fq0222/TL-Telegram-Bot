@@ -3,11 +3,22 @@
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 const { createApp } = require('../src/app');
 const { createAdminRoutes } = require('../src/routes/admin-routes');
 const { createAdminAuthService } = require('../src/services/admin-auth-service');
 const { createAdminAuthMiddleware } = require('../src/middlewares/admin-auth-middleware');
+
+/**
+ * 使用 scrypt 生成与服务端一致的密码哈希。
+ * @param {string} password - 明文密码。
+ * @param {string} salt - 固定盐值。
+ * @returns {string} 可存储密码哈希。
+ */
+function buildPasswordHash(password, salt = 'task-auth-salt') {
+  return `scrypt$${salt}$${crypto.scryptSync(password, salt, 64).toString('hex')}`;
+}
 
 /**
  * 创建最小 fake express，实现当前测试需要的应用、路由与中间件分发。
@@ -356,16 +367,167 @@ test('POST /api/admin/auth/login should return injected development token', asyn
   });
 });
 
-test('createApp default admin route chain should use injected devAuth without manual authService wiring', async () => {
+test('POST /api/admin/auth/login should validate persisted admin credentials from config service', async () => {
   const expressLib = createFakeExpress();
   const app = createApp({
     expressLib,
-    devAuth: {
-      token: 'chain-token',
-      adminId: 'chain-admin',
-      sessionId: 'chain-session',
-      tokenType: 'Bearer'
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      devAuth: {
+        token: 'persisted-token',
+        adminId: 'persisted-admin',
+        sessionId: 'persisted-session',
+        tokenType: 'Bearer'
+      },
+      configService: {
+        async saveConfigs() {
+          return [];
+        },
+        async getConfigs(keys) {
+          return keys.reduce((result, key) => {
+            if (key === 'admin_auth_username') {
+              result[key] = 'owner';
+              return result;
+            }
+
+            if (key === 'admin_auth_password_hash') {
+              result[key] = buildPasswordHash('Owner#123');
+              return result;
+            }
+
+            result[key] = '';
+            return result;
+          }, {});
+        }
+      }
+    })
+  });
+  const successResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    body: {
+      username: 'owner',
+      password: 'Owner#123'
     }
+  });
+  const failedResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    body: {
+      username: 'owner',
+      password: 'wrong-password'
+    }
+  });
+
+  assert.equal(successResponse.statusCode, 200);
+  assert.equal(successResponse.body?.code, 0);
+  assert.equal(successResponse.body?.message, 'ok');
+  assert.equal(successResponse.body?.data?.tokenType, 'Bearer');
+  assert.match(successResponse.body?.data?.token || '', /^[0-9a-f-]{16,}$/i);
+  assert.match(successResponse.body?.data?.expiresAt || '', /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(failedResponse.statusCode, 401);
+  assert.deepEqual(failedResponse.body, {
+    code: 401,
+    message: '用户名或密码错误',
+    data: null
+  });
+});
+
+test('POST /api/admin/auth/login should fall back to env admin credentials when SQLite credentials are absent', async () => {
+  const originalAdminUsername = process.env.ADMIN_USERNAME;
+  const originalAdminPassword = process.env.ADMIN_PASSWORD;
+  const expressLib = createFakeExpress();
+
+  process.env.ADMIN_USERNAME = 'env-admin';
+  process.env.ADMIN_PASSWORD = 'admin123456';
+
+  try {
+    const app = createApp({
+      expressLib,
+      adminRoutes: createAdminRoutes({
+        expressLib,
+        devAuth: {
+          token: 'env-token',
+          adminId: 'env-admin-id',
+          sessionId: 'env-session',
+          tokenType: 'Bearer'
+        },
+        configService: {
+          async saveConfigs() {
+            return [];
+          },
+          async getConfigs(keys) {
+            return keys.reduce((result, key) => {
+              result[key] = '';
+              return result;
+            }, {});
+          }
+        }
+      })
+    });
+    const response = await dispatchRequest({
+      app,
+      method: 'POST',
+      path: '/api/admin/auth/login',
+      body: {
+        username: 'env-admin',
+        password: 'admin123456'
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body?.code, 0);
+    assert.equal(response.body?.message, 'ok');
+    assert.equal(response.body?.data?.tokenType, 'Bearer');
+    assert.match(response.body?.data?.token || '', /^[0-9a-f-]{16,}$/i);
+    assert.match(response.body?.data?.expiresAt || '', /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    if (originalAdminUsername === undefined) {
+      delete process.env.ADMIN_USERNAME;
+    } else {
+      process.env.ADMIN_USERNAME = originalAdminUsername;
+    }
+
+    if (originalAdminPassword === undefined) {
+      delete process.env.ADMIN_PASSWORD;
+    } else {
+      process.env.ADMIN_PASSWORD = originalAdminPassword;
+    }
+  }
+});
+
+test('POST /api/admin/auth/login should issue session token with configured 1 hour ttl', async () => {
+  const expressLib = createFakeExpress();
+  const savedSessions = new Map();
+  const nowValue = Date.parse('2026-06-03T10:00:00.000Z');
+  const authService = createAdminAuthService({
+    devAuth: {
+      username: 'admin',
+      password: 'admin123456',
+      adminId: 'ttl-admin',
+      sessionId: 'ttl-session',
+      tokenType: 'Bearer'
+    },
+    sessionRepository: {
+      async saveSession(session) {
+        savedSessions.set(session.sessionId, session);
+        return session;
+      },
+      async getSession(sessionId) {
+        return savedSessions.get(sessionId) || null;
+      }
+    },
+    tokenTtlSeconds: 3600,
+    now: () => nowValue
+  });
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService
+    })
   });
   const loginResponse = await dispatchRequest({
     app,
@@ -373,27 +535,234 @@ test('createApp default admin route chain should use injected devAuth without ma
     path: '/api/admin/auth/login',
     body: {
       username: 'admin',
-      password: 'dev-password'
+      password: 'admin123456'
     }
   });
+  const token = loginResponse.body?.data?.token || '';
   const configResponse = await dispatchRequest({
     app,
     method: 'GET',
     path: '/api/admin/config',
     headers: {
-      authorization: `Bearer ${loginResponse.body.data.token}`
+      authorization: `Bearer ${token}`
     }
   });
 
   assert.equal(loginResponse.statusCode, 200);
-  assert.deepEqual(loginResponse.body, {
+  assert.match(token, /^[0-9a-f-]{16,}$/i);
+  assert.equal(savedSessions.size, 1);
+  assert.equal(configResponse.statusCode, 200);
+  assert.deepEqual(savedSessions.get(token), {
+    sessionId: token,
+    adminId: 'ttl-admin',
+    status: 'active',
+    payloadJson: JSON.stringify({
+      tokenType: 'Bearer'
+    }),
+    expiresAt: '2026-06-03T11:00:00.000Z'
+  });
+});
+
+test('GET /api/admin/config should return 401 after session token expires', async () => {
+  const expressLib = createFakeExpress();
+  let nowValue = Date.parse('2026-06-03T10:00:00.000Z');
+  const savedSessions = new Map();
+  const authService = createAdminAuthService({
+    devAuth: {
+      username: 'admin',
+      password: 'admin123456',
+      adminId: 'expire-admin',
+      sessionId: 'expire-session',
+      tokenType: 'Bearer'
+    },
+    sessionRepository: {
+      async saveSession(session) {
+        savedSessions.set(session.sessionId, session);
+        return session;
+      },
+      async getSession(sessionId) {
+        return savedSessions.get(sessionId) || null;
+      }
+    },
+    tokenTtlSeconds: 3600,
+    now: () => nowValue
+  });
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService
+    })
+  });
+  const loginResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    body: {
+      username: 'admin',
+      password: 'admin123456'
+    }
+  });
+  const token = loginResponse.body?.data?.token || '';
+
+  nowValue = Date.parse('2026-06-03T11:00:01.000Z');
+
+  const expiredResponse = await dispatchRequest({
+    app,
+    method: 'GET',
+    path: '/api/admin/config',
+    headers: {
+      authorization: `Bearer ${token}`
+    }
+  });
+
+  assert.equal(expiredResponse.statusCode, 401);
+  assert.deepEqual(expiredResponse.body, {
+    code: 401,
+    message: '未授权访问',
+    data: null
+  });
+});
+
+test('PUT /api/admin/auth/credentials should verify current password and persist updated username and password hash', async () => {
+  const expressLib = createFakeExpress();
+  const storedConfig = new Map([
+    ['admin_auth_username', 'admin'],
+    ['admin_auth_password_hash', buildPasswordHash('dev-password')]
+  ]);
+  const savedEntries = [];
+  const authService = createAdminAuthService({
+    devAuth: {
+      token: 'credential-token',
+      adminId: 'credential-admin',
+      sessionId: 'credential-session',
+      tokenType: 'Bearer'
+    },
+    configService: {
+      async saveConfigs(entries) {
+        savedEntries.push(...entries);
+        entries.forEach((entry) => {
+          storedConfig.set(entry.key, entry.value);
+        });
+        return entries;
+      },
+      async getConfigs(keys) {
+        return keys.reduce((result, key) => {
+          result[key] = storedConfig.get(key) || '';
+          return result;
+        }, {});
+      }
+    }
+  });
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService
+    })
+  });
+  const updateResponse = await dispatchRequest({
+    app,
+    method: 'PUT',
+    path: '/api/admin/auth/credentials',
+    headers: {
+      authorization: 'Bearer credential-token'
+    },
+    body: {
+      username: 'owner',
+      currentPassword: 'dev-password',
+      newPassword: 'Owner#456'
+    }
+  });
+  const reloginResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    body: {
+      username: 'owner',
+      password: 'Owner#456'
+    }
+  });
+
+  assert.equal(updateResponse.statusCode, 200);
+  assert.deepEqual(updateResponse.body, {
     code: 0,
     message: 'ok',
     data: {
-      token: 'chain-token',
+      username: 'owner'
+    }
+  });
+  assert.equal(savedEntries.length, 2);
+  assert.equal(savedEntries[0].key, 'admin_auth_username');
+  assert.equal(savedEntries[0].value, 'owner');
+  assert.equal(savedEntries[1].key, 'admin_auth_password_hash');
+  assert.match(savedEntries[1].value, /^scrypt\$/);
+  assert.notEqual(savedEntries[1].value, buildPasswordHash('dev-password'));
+  assert.equal(reloginResponse.statusCode, 200);
+  assert.deepEqual(reloginResponse.body, {
+    code: 0,
+    message: 'ok',
+    data: {
+      token: 'credential-token',
       tokenType: 'Bearer'
     }
   });
+});
+
+test('createApp admin route chain should support login then access protected config api', async () => {
+  const expressLib = createFakeExpress();
+  const configService = {
+    async saveConfigs() {
+      return [];
+    },
+    async getConfigs(keys) {
+      return keys.reduce((result, key) => {
+        result[key] = '';
+        return result;
+      }, {});
+    }
+  };
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService: createAdminAuthService({
+        devAuth: {
+          username: 'chain-admin-user',
+          password: 'chain-admin-password',
+          token: 'chain-token',
+          adminId: 'chain-admin',
+          sessionId: 'chain-session',
+          tokenType: 'Bearer'
+        },
+        configService
+      }),
+      configService
+    })
+  });
+  const loginResponse = await dispatchRequest({
+    app,
+    method: 'POST',
+    path: '/api/admin/auth/login',
+    body: {
+      username: 'chain-admin-user',
+      password: 'chain-admin-password'
+    }
+  });
+  const issuedToken = loginResponse.body?.data?.token || '';
+  const configResponse = await dispatchRequest({
+    app,
+    method: 'GET',
+    path: '/api/admin/config',
+    headers: {
+      authorization: `Bearer ${issuedToken}`
+    }
+  });
+
+  assert.equal(loginResponse.statusCode, 200);
+  assert.equal(typeof issuedToken, 'string');
+  assert.notEqual(issuedToken, '');
+  assert.equal(loginResponse.body?.data?.tokenType, 'Bearer');
   assert.equal(configResponse.statusCode, 200);
   assert.deepEqual(configResponse.body, {
     code: 0,
@@ -415,14 +784,20 @@ test('createApp default admin route chain should use injected devAuth without ma
 
 test('GET /api/admin/certificates/status should require authorization and return certificate skeleton payload', async () => {
   const expressLib = createFakeExpress();
-  const app = createApp({
-    expressLib,
+  const authService = createAdminAuthService({
     devAuth: {
       token: 'status-token',
       adminId: 'status-admin',
       sessionId: 'status-session',
       tokenType: 'Bearer'
     }
+  });
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService
+    })
   });
   const unauthorizedResponse = await dispatchRequest({
     app,
@@ -459,14 +834,20 @@ test('GET /api/admin/certificates/status should require authorization and return
 
 test('GET /api/admin/status should return status skeleton payload after authentication', async () => {
   const expressLib = createFakeExpress();
-  const app = createApp({
-    expressLib,
+  const authService = createAdminAuthService({
     devAuth: {
       token: 'overview-token',
       adminId: 'overview-admin',
       sessionId: 'overview-session',
       tokenType: 'Bearer'
     }
+  });
+  const app = createApp({
+    expressLib,
+    adminRoutes: createAdminRoutes({
+      expressLib,
+      authService
+    })
   });
   const response = await dispatchRequest({
     app,
@@ -487,10 +868,10 @@ test('GET /api/admin/status should return status skeleton payload after authenti
   });
 });
 
-test('admin auth middleware should attach auth result to req.adminAuth after token verification', () => {
+test('admin auth middleware should attach auth result to req.adminAuth after token verification', async () => {
   const middleware = createAdminAuthMiddleware({
     authService: {
-      verifyToken(token) {
+      async verifyToken(token) {
         if (token !== 'verified-token') {
           return null;
         }
@@ -512,7 +893,7 @@ test('admin auth middleware should attach auth result to req.adminAuth after tok
   const res = createResponse();
   let nextCalled = false;
 
-  middleware(req, res, () => {
+  await middleware(req, res, () => {
     nextCalled = true;
   });
 
