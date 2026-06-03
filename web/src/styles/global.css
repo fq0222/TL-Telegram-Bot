@@ -1,0 +1,321 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI Variable", "Trebuchet MS", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #182028;
+  background:
+    radial-gradient(circle at top left, rgba(243, 159, 90, 0.35), transparent 30%),
+    radial-gradient(circle at top right, rgba(71, 140, 166, 0.24), transparent 28%),
+    linear-gradient(160deg, #f2ece0 0%, #eef4f5 45%, #d8e4e8 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.shell__sidebar {
+  padding: 40px 28px;
+  background: rgba(17, 30, 40, 0.9);
+  color: #edf3f6;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.shell__eyebrow,
+.auth-view__eyebrow,
+.shell__header-kicker,
+.status-card__label,
+.field__label {
+  margin: 0;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 0.74rem;
+}
+
+.shell__title,
+.auth-view__title,
+.shell__header-title {
+  margin: 12px 0 0;
+  font-family: "Palatino Linotype", "Book Antiqua", serif;
+  font-weight: 700;
+  line-height: 1.08;
+}
+
+.shell__title,
+.auth-view__title {
+  font-size: clamp(2rem, 4vw, 3.4rem);
+}
+
+.shell__intro,
+.auth-view__description,
+.content-block__text,
+.status-card__description,
+.auth-view__message {
+  color: rgba(237, 243, 246, 0.78);
+}
+
+.shell__nav {
+  display: grid;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.shell__link {
+  display: block;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.shell__link:hover,
+.shell__link--active {
+  transform: translateX(4px);
+  border-color: rgba(243, 159, 90, 0.45);
+  background: rgba(243, 159, 90, 0.12);
+}
+
+.shell__link-label,
+.content-block__title,
+.status-card__value {
+  display: block;
+  font-weight: 700;
+}
+
+.shell__link-note {
+  display: block;
+  margin-top: 4px;
+  color: rgba(237, 243, 246, 0.64);
+  font-size: 0.92rem;
+}
+
+.shell__content {
+  padding: 34px;
+}
+
+.shell__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.shell__header-kicker {
+  color: #6d7d85;
+}
+
+.shell__header-title {
+  font-size: clamp(2rem, 4vw, 3rem);
+  color: #20252b;
+}
+
+.shell__panel {
+  margin-top: 24px;
+  padding: 24px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.64);
+  border: 1px solid rgba(24, 32, 40, 0.08);
+  box-shadow: 0 24px 60px rgba(27, 41, 52, 0.12);
+  animation: fade-up 0.45s ease;
+}
+
+.view-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.view-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.view-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.status-card,
+.content-block {
+  padding: 22px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(243, 246, 247, 0.8));
+  border: 1px solid rgba(24, 32, 40, 0.08);
+}
+
+.status-card__label {
+  color: #64747b;
+}
+
+.status-card__value {
+  margin: 14px 0 10px;
+  font-size: 1.8rem;
+  color: #16212a;
+}
+
+.status-card__description,
+.content-block__text,
+.content-list,
+.content-block__code {
+  margin: 0;
+  color: #4f6068;
+}
+
+.content-block__title {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+  color: #16212a;
+}
+
+.content-list {
+  padding-left: 18px;
+}
+
+.content-block__code {
+  overflow: auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: #182028;
+  color: #edf3f6;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 0.9rem;
+}
+
+.auth-view {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.auth-view__panel {
+  width: min(560px, 100%);
+  padding: 32px;
+  border-radius: 32px;
+  background: rgba(17, 30, 40, 0.9);
+  color: #edf3f6;
+  box-shadow: 0 30px 80px rgba(17, 30, 40, 0.24);
+}
+
+.auth-view__form {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field__label {
+  color: rgba(237, 243, 246, 0.72);
+}
+
+.field__input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #edf3f6;
+}
+
+.field__input::placeholder {
+  color: rgba(237, 243, 246, 0.42);
+}
+
+.primary-button {
+  padding: 14px 18px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(120deg, #ee8f57, #cb6337);
+  color: #fff9f3;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.primary-button:hover {
+  transform: translateY(-1px);
+}
+
+.primary-button:disabled {
+  opacity: 0.72;
+  cursor: progress;
+}
+
+.auth-view__message {
+  min-height: 1.5em;
+  margin-top: 16px;
+}
+
+.auth-view__message[data-tone='success'] {
+  color: #9adbb3;
+}
+
+.auth-view__message[data-tone='danger'] {
+  color: #ffb4aa;
+}
+
+.auth-view__message[data-tone='muted'] {
+  color: rgba(237, 243, 246, 0.72);
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 960px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .shell__sidebar {
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .view-grid--three,
+  .view-grid--two {
+    grid-template-columns: 1fr;
+  }
+}

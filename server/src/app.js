@@ -1,6 +1,7 @@
 /**
  * 概述：创建服务端最小 Express 应用，挂载 JSON 解析、请求日志、管理员路由、健康检查和兜底中间件。
  */
+const path = require('path');
 const { requestLogger } = require('./middlewares/request-logger');
 const { notFoundHandler } = require('./middlewares/not-found-handler');
 const { errorHandler } = require('./middlewares/error-handler');
@@ -37,6 +38,9 @@ function createApp(options = {}) {
   app.use(requestLogger);
   app.use('/api/admin', adminRoutes);
   app.use('/telegram', webhookRoutes);
+  if (typeof expressLib.static === 'function') {
+    app.use(expressLib.static(path.resolve(__dirname, '../../web/dist')));
+  }
 
   /**
    * 健康检查接口，用于确认最小服务已成功启动。
