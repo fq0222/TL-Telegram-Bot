@@ -19,6 +19,24 @@ const { createTelegramApiService } = require('../services/telegram-api-service')
 let runtimeAdminServices = null;
 
 /**
+ * 读取证书服务所需的目录配置。
+ * @returns {{ acmeBasePath?: string, tlsRootPath?: string }} 仅在存在有效配置时返回对应字段。
+ */
+function resolveCertificateServiceOptions() {
+  const options = {};
+
+  if (typeof process.env.ACME_BASE_PATH === 'string' && process.env.ACME_BASE_PATH.trim()) {
+    options.acmeBasePath = process.env.ACME_BASE_PATH.trim();
+  }
+
+  if (typeof process.env.TLS_TARGET_BASE_PATH === 'string' && process.env.TLS_TARGET_BASE_PATH.trim()) {
+    options.tlsRootPath = process.env.TLS_TARGET_BASE_PATH.trim();
+  }
+
+  return options;
+}
+
+/**
  * 创建运行期管理员依赖。
  * @returns {{
  *   authService: { login: Function, verifyToken: Function, getCredentialProfile?: Function, updateCredentials?: Function },
@@ -45,7 +63,7 @@ function getRuntimeAdminServices() {
       authService: null,
       loginAttemptService: createAdminLoginAttemptService(),
       sessionRepository,
-      certificateService: createCertificateService(),
+      certificateService: createCertificateService(resolveCertificateServiceOptions()),
       telegramApiService: createTelegramApiService({
         configService,
         fetchImpl: global.fetch
@@ -71,7 +89,7 @@ function getRuntimeAdminServices() {
           }, {});
         }
       },
-      certificateService: createCertificateService(),
+      certificateService: createCertificateService(resolveCertificateServiceOptions()),
       telegramApiService: createTelegramApiService({
         botToken: process.env.TELEGRAM_BOT_TOKEN
       })
@@ -149,5 +167,6 @@ function createAdminRoutes(options = {}) {
 }
 
 module.exports = {
-  createAdminRoutes
+  createAdminRoutes,
+  resolveCertificateServiceOptions
 };
