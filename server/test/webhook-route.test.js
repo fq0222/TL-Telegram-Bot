@@ -366,6 +366,83 @@ test('createTelegramCommandService should dispatch /status to internal API after
   });
 });
 
+test('createTelegramCommandService should send Telegram reply after internal API dispatch succeeds', async () => {
+  const sentMessages = [];
+  const commandService = createTelegramCommandService({
+    configService: {
+      async getConfigs() {
+        return {
+          internal_api_base_url: 'http://internal.example.com',
+          internal_api_secret: 'test-secret'
+        };
+      }
+    },
+    internalApiServiceFactory() {
+      return {
+        async request(options) {
+          if (options.path === '/api/internal/telegram/admin/by-chat/20001') {
+            return {
+              code: 0,
+              message: 'ok',
+              data: {
+                bound: true
+              }
+            };
+          }
+
+          return {
+            code: 0,
+            message: 'ok',
+            data: {
+              total_servers: 1,
+              healthy_servers: 1,
+              unhealthy_servers: 0
+            }
+          };
+        }
+      };
+    },
+    telegramApiService: {
+      async sendMessage(payload) {
+        sentMessages.push(payload);
+        return {
+          ok: true,
+          result: {
+            message_id: 1
+          }
+        };
+      }
+    }
+  });
+
+  const result = await commandService.handleUpdate({
+    update_id: 123456790,
+    message: {
+      text: '/status',
+      chat: {
+        id: 20001,
+        type: 'private'
+      },
+      from: {
+        id: 30001
+      }
+    }
+  });
+
+  assert.equal(result.dispatch.ok, true);
+  assert.deepEqual(sentMessages, [
+    {
+      chatId: '20001',
+      text: '服务器状态汇总\n总数：1\n健康：1\n异常：0'
+    }
+  ]);
+  assert.deepEqual(result.reply, {
+    attempted: true,
+    ok: true,
+    messageId: 1
+  });
+});
+
 test('createTelegramCommandService should dispatch /bind directly to internal API bind verify endpoint', async () => {
   const requestCalls = [];
   const commandService = createTelegramCommandService({

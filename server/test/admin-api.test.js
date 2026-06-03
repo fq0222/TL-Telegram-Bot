@@ -832,21 +832,47 @@ test('GET /api/admin/certificates/status should require authorization and return
   });
 });
 
-test('GET /api/admin/status should return status skeleton payload after authentication', async () => {
+test('GET /api/admin/status should return real webhook readiness summary after authentication', async () => {
   const expressLib = createFakeExpress();
-  const authService = createAdminAuthService({
-    devAuth: {
-      token: 'overview-token',
-      adminId: 'overview-admin',
-      sessionId: 'overview-session',
-      tokenType: 'Bearer'
-    }
-  });
   const app = createApp({
     expressLib,
     adminRoutes: createAdminRoutes({
       expressLib,
-      authService
+      authService: createAdminAuthService({
+        devAuth: {
+          token: 'overview-token',
+          adminId: 'overview-admin',
+          sessionId: 'overview-session',
+          tokenType: 'Bearer'
+        }
+      }),
+      configService: {
+        async saveConfigs() {
+          return [];
+        },
+        async getConfigs() {
+          return {
+            webhook_base_url: 'https://bot.example.com',
+            webhook_path: '/telegram/webhook',
+            selected_certificate_domain: 'example.com',
+            tls_fullchain_path: '/root/tlboot/example.com/fullchain.pem',
+            tls_privkey_path: '/root/tlboot/example.com/privkey.pem',
+            telegram_bot_token: 'bot-token-value'
+          };
+        }
+      },
+      telegramApiService: {
+        async getWebhookInfo() {
+          return {
+            ok: true,
+            result: {
+              url: 'https://bot.example.com/telegram/webhook',
+              pending_update_count: 0,
+              last_error_message: ''
+            }
+          };
+        }
+      }
     })
   });
   const response = await dispatchRequest({
@@ -863,7 +889,19 @@ test('GET /api/admin/status should return status skeleton payload after authenti
     code: 0,
     message: 'ok',
     data: {
-      status: 'ready'
+      status: 'ready',
+      webhook_url: 'https://bot.example.com/telegram/webhook',
+      certificate_ready: true,
+      telegram_bot_token_configured: true,
+      webhook_registered: true,
+      webhook_pending_update_count: 0,
+      webhook_last_error_message: '',
+      checks: {
+        certificate_ready: true,
+        telegram_bot_token_configured: true,
+        webhook_configured: true,
+        webhook_registered: true
+      }
     }
   });
 });
@@ -1093,7 +1131,7 @@ test('POST /api/admin/certificates/select should activate domain and persist sel
   });
 });
 
-test('POST /api/admin/webhook/register and GET /api/admin/status/overview should return integrated admin data', async () => {
+test('POST /api/admin/webhook/register and GET /api/admin/status/overview should return real Telegram webhook details', async () => {
   const expressLib = createFakeExpress();
   const app = createApp({
     expressLib,
@@ -1130,9 +1168,18 @@ test('POST /api/admin/webhook/register and GET /api/admin/status/overview should
         async setWebhook(payload) {
           return {
             ok: true,
-            mocked: true,
-            method: 'setWebhook',
-            payload
+            result: true,
+            description: `registered:${payload.url}`
+          };
+        },
+        async getWebhookInfo() {
+          return {
+            ok: true,
+            result: {
+              url: 'https://bot.example.com/telegram/webhook',
+              pending_update_count: 0,
+              last_error_message: ''
+            }
           };
         }
       }
@@ -1162,7 +1209,12 @@ test('POST /api/admin/webhook/register and GET /api/admin/status/overview should
     message: 'ok',
     data: {
       registered: true,
-      webhook_url: 'https://bot.example.com/telegram/webhook'
+      webhook_url: 'https://bot.example.com/telegram/webhook',
+      telegram_result: {
+        ok: true,
+        result: true,
+        description: 'registered:https://bot.example.com/telegram/webhook'
+      }
     }
   });
   assert.equal(overviewResponse.statusCode, 200);
@@ -1174,7 +1226,11 @@ test('POST /api/admin/webhook/register and GET /api/admin/status/overview should
       selected_certificate_domain: 'example.com',
       tls_fullchain_path: '/root/tlboot/example.com/fullchain.pem',
       tls_privkey_path: '/root/tlboot/example.com/privkey.pem',
-      certificate_ready: true
+      certificate_ready: true,
+      telegram_bot_token_configured: false,
+      webhook_registered: true,
+      webhook_pending_update_count: 0,
+      webhook_last_error_message: ''
     }
   });
 });

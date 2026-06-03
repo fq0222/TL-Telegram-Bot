@@ -9,6 +9,7 @@ const { createLogger } = require('./utils/logger');
 const { ok } = require('./utils/response');
 const { createWebhookRoutes } = require('./routes/webhook-routes');
 const { createTelegramCommandService } = require('./services/telegram-command-service');
+const { createTelegramApiService } = require('./services/telegram-api-service');
 const { createConfigService } = require('./services/config-service');
 const { createConfigRepository } = require('./repositories/config-repository');
 const { createDatabase } = require('./config/database');
@@ -60,9 +61,14 @@ function getRuntimeCommandService() {
     const database = createDatabase();
     const configRepository = createConfigRepository({ database });
     const configService = createConfigService({ repository: configRepository });
+    const telegramApiService = createTelegramApiService({
+      configService,
+      fetchImpl: global.fetch
+    });
 
     runtimeCommandService = createTelegramCommandService({
       configService,
+      telegramApiService,
       fetchImpl: global.fetch
     });
   } catch (_error) {
@@ -75,6 +81,9 @@ function getRuntimeCommandService() {
           }, {});
         }
       },
+      telegramApiService: createTelegramApiService({
+        fetchImpl: global.fetch
+      }),
       fetchImpl: global.fetch
     });
   }

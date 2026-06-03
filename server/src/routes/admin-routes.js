@@ -36,14 +36,16 @@ function getRuntimeAdminServices() {
     const database = createDatabase();
     const configRepository = createConfigRepository({ database });
     const sessionRepository = createSessionRepository({ database });
+    const configService = createConfigService({ repository: configRepository });
 
     runtimeAdminServices = {
-      configService: createConfigService({ repository: configRepository }),
+      configService,
       authService: null,
       sessionRepository,
       certificateService: createCertificateService(),
       telegramApiService: createTelegramApiService({
-        botToken: process.env.TELEGRAM_BOT_TOKEN
+        configService,
+        fetchImpl: global.fetch
       })
     };
     runtimeAdminServices.authService = createAdminAuthService({
