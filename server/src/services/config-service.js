@@ -1,5 +1,5 @@
 /**
- * 概述：封装系统配置的最小业务接口，负责参数校验、日志记录，并委托配置仓储完成持久化。
+ * 概述：封装系统配置的最小业务接口，负责参数校验、日志记录，并委托配置仓储完成持久化与读取。
  */
 const { createLogger } = require('../utils/logger');
 
@@ -7,8 +7,21 @@ const logger = createLogger('ConfigService');
 
 /**
  * 创建系统配置服务。
- * @param {{ repository: { saveConfig?: Function, saveConfigs: Function, getConfig: Function } }} options - 服务依赖，至少需要配置仓储。
- * @returns {{ saveConfig: Function, saveConfigs: Function, getConfig: Function, getConfigs: Function }} 配置服务接口。
+ * @param {{
+ *   repository: {
+ *     saveConfig?: Function,
+ *     saveConfigs: Function,
+ *     getConfig: Function,
+ *     getConfigSync?: Function
+ *   }
+ * }} options - 服务依赖。
+ * @returns {{
+ *   saveConfig: Function,
+ *   saveConfigs: Function,
+ *   getConfig: Function,
+ *   getConfigs: Function,
+ *   getConfigsSync: Function
+ * }} 配置服务接口。
  */
 function createConfigService({ repository }) {
   if (!repository) {
@@ -21,7 +34,6 @@ function createConfigService({ repository }) {
 
   /**
    * 规范化单个配置项。
-   * 核心分支：配置键为空或配置值不是字符串时直接抛错，保证传入仓储前参数已收敛为可落库格式。
    * @param {{ key: string, value: string }} config - 待校验配置项。
    * @returns {{ key: string, value: string }} 已规范化配置项。
    */
@@ -43,8 +55,43 @@ function createConfigService({ repository }) {
   }
 
   /**
+   * 校验批量读取配置时的键列表。
+   * @param {string[]} keys - 待读取配置键列表。
+   * @returns {string[]} 已校验的配置键列表。
+   */
+  function normalizeConfigKeys(keys) {
+    if (!Array.isArray(keys) || keys.length === 0) {
+      logger.error('批量读取系统配置失败：配置键列表为空或格式非法');
+      throw new Error('Config keys must be a non-empty array');
+    }
+
+    return keys.map((key) => {
+      if (typeof key !== 'string' || key.trim() === '') {
+        logger.error('批量读取系统配置失败：存在无效配置键');
+        throw new Error('Config key is required');
+      }
+
+      return key.trim();
+    });
+  }
+
+  /**
+   * 将配置项列表组装为快照对象。
+   * @param {string[]} keys - 配置键列表。
+   * @param {Array<{ value?: string } | null>} configEntries - 与键顺序对齐的配置项列表。
+   * @returns {Record<string, string>} 配置快照。
+   */
+  function buildConfigSnapshot(keys, configEntries) {
+    return keys.reduce((result, key, index) => {
+      const configEntry = configEntries[index];
+
+      result[key] = configEntry && typeof configEntry.value === 'string' ? configEntry.value : '';
+      return result;
+    }, {});
+  }
+
+  /**
    * 批量保存配置项。
-   * 核心分支：空数组直接拒绝，避免调用仓储时出现无意义批量写入。
    * @param {Array<{ key: string, value: string }>} entries - 待保存配置项列表。
    * @returns {Promise<Array<{ key: string, value: string, updatedAt?: string }>>} 已保存配置项列表。
    */
@@ -61,7 +108,6 @@ function createConfigService({ repository }) {
 
   /**
    * 保存配置项。
-   * 核心分支：单条保存作为批量保存的薄包装，确保参数校验与 trim 逻辑只有一处来源。
    * @param {{ key: string, value: string }} config - 待保存配置。
    * @returns {Promise<{ key: string, value: string, updatedAt?: string }>} 已保存配置。
    */
@@ -72,7 +118,6 @@ function createConfigService({ repository }) {
 
   /**
    * 读取配置项。
-   * 核心分支：配置键为空时直接报错；未命中时保持 null 返回，由调用方决定缺省值策略。
    * @param {string} key - 配置键。
    * @returns {Promise<{ key: string, value: string, updatedAt?: string } | null>} 配置项或空值。
    */
@@ -88,31 +133,39 @@ function createConfigService({ repository }) {
 
   /**
    * 批量读取配置项。
-   * 核心分支语义：仅接受非空键数组；未命中的配置统一回填空字符串，便于控制器直接组装前端配置快照。
    * @param {string[]} keys - 待读取配置键列表。
-   * @returns {Promise<Record<string, string>>} 以配置键为索引的配置快照。
+   * @returns {Promise<Record<string, string>>} 配置快照。
    */
   async function getConfigs(keys) {
-    if (!Array.isArray(keys) || keys.length === 0) {
-      logger.error('批量读取系统配置失败：配置键列表为空或格式非法');
-      throw new Error('Config keys must be a non-empty array');
+    const normalizedKeys = normalizeConfigKeys(keys);
+    const configEntries = await Promise.all(normalizedKeys.map((key) => getConfig(key)));
+    return buildConfigSnapshot(normalizedKeys, configEntries);
+  }
+
+  /**
+   * 同步批量读取配置项。
+   * 核心分支：仓储未提供同步读取能力时立即报错，避免启动阶段误以为已经读取数据库。
+   * @param {string[]} keys - 待读取配置键列表。
+   * @returns {Record<string, string>} 配置快照。
+   */
+  function getConfigsSync(keys) {
+    if (typeof repository.getConfigSync !== 'function') {
+      logger.error('同步读取系统配置失败：仓储未提供 getConfigSync 能力');
+      throw new Error('Config repository must expose getConfigSync() for synchronous reads');
     }
 
-    const configEntries = await Promise.all(keys.map((key) => getConfig(key)));
-
-    return keys.reduce((result, key, index) => {
-      const configEntry = configEntries[index];
-
-      result[key] = configEntry && typeof configEntry.value === 'string' ? configEntry.value : '';
-      return result;
-    }, {});
+    const normalizedKeys = normalizeConfigKeys(keys);
+    logger.info(`开始同步读取系统配置，条数：${normalizedKeys.length}`);
+    const configEntries = normalizedKeys.map((key) => repository.getConfigSync(key));
+    return buildConfigSnapshot(normalizedKeys, configEntries);
   }
 
   return {
     saveConfig,
     saveConfigs,
     getConfig,
-    getConfigs
+    getConfigs,
+    getConfigsSync
   };
 }
 

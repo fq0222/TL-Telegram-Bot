@@ -14,16 +14,35 @@ const logger = createLogger('Server');
 
 /**
  * 启动服务。
- * 核心分支语义：证书就绪时优先启动 HTTPS；证书缺失时打印告警并降级为 HTTP 监听，保证管理员接口仍可继续初始化与排障。
- * @param {{ app?: unknown, env?: NodeJS.ProcessEnv, httpModule?: { createServer: Function }, httpsModule?: { createServer: Function }, httpsStateService?: { resolveTlsState: Function } }} [options] - 可选启动参数；支持注入应用、环境与网络依赖。
+ * 核心分支语义：优先支持显式注入的 serverFactory/port 以便测试；否则按 TLS 状态决定启动 HTTPS 或降级 HTTP。
+ * @param {{
+ *   app?: unknown,
+ *   env?: NodeJS.ProcessEnv,
+ *   port?: number,
+ *   httpModule?: { createServer: Function },
+ *   httpsModule?: { createServer: Function },
+ *   httpsStateService?: { resolveTlsState: Function },
+ *   serverFactory?: Function
+ * }} [options] - 可选启动参数。
  * @returns {import('http').Server | import('https').Server} 已启动的服务实例。
  */
 function startServer(options = {}) {
   const app = options.app || createApp();
   const runtimeEnv = loadServerEnv({ env: options.env });
+  const listenPort = Number.isInteger(options.port) && options.port > 0 ? options.port : runtimeEnv.port;
   const httpModule = options.httpModule || http;
   const httpsModule = options.httpsModule || https;
   const httpsStateService = options.httpsStateService || createHttpsStateService();
+
+  if (typeof options.serverFactory === 'function') {
+    const injectedServer = options.serverFactory(app);
+
+    logger.info(`准备启动服务，监听地址 ${runtimeEnv.host}:${listenPort}`);
+    return injectedServer.listen(listenPort, () => {
+      logger.info(`服务已通过注入 serverFactory 启动，监听端口 ${listenPort}`);
+    });
+  }
+
   const tlsState = httpsStateService.resolveTlsState({
     tlsFullchainPath: runtimeEnv.tlsFullchainPath,
     tlsPrivkeyPath: runtimeEnv.tlsPrivkeyPath
@@ -38,15 +57,15 @@ function startServer(options = {}) {
       )
     : httpModule.createServer(app);
 
-  logger.info(`准备启动服务，监听地址 ${runtimeEnv.host}:${runtimeEnv.port}`);
+  logger.info(`准备启动服务，监听地址 ${runtimeEnv.host}:${listenPort}`);
 
-  return server.listen(runtimeEnv.port, runtimeEnv.host, () => {
+  return server.listen(listenPort, runtimeEnv.host, () => {
     if (tlsState.ready) {
-      logger.info(`HTTPS 服务已启动，监听地址 ${runtimeEnv.host}:${runtimeEnv.port}`);
+      logger.info(`HTTPS 服务已启动，监听地址 ${runtimeEnv.host}:${listenPort}`);
       return;
     }
 
-    logger.warn(`HTTPS 证书未配置完成，已降级为 HTTP 监听 ${runtimeEnv.host}:${runtimeEnv.port}`);
+    logger.warn(`HTTPS 证书未配置完成，已降级为 HTTP 监听 ${runtimeEnv.host}:${listenPort}`);
   });
 }
 

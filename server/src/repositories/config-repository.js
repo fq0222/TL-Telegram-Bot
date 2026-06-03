@@ -7,8 +7,13 @@ const logger = createLogger('ConfigRepository');
 
 /**
  * 创建系统配置仓储。
- * @param {{ prepare: Function }} options.database - SQLite 数据库实例，需支持 prepare 以执行参数化 SQL。
- * @returns {{ saveConfig: Function, saveConfigs: Function, getConfig: Function }} 配置仓储接口。
+ * @param {{ database: { prepare: Function, transaction?: Function } }} options - 仓储依赖。
+ * @returns {{
+ *   saveConfig: Function,
+ *   saveConfigs: Function,
+ *   getConfig: Function,
+ *   getConfigSync: Function
+ * }} 配置仓储接口。
  */
 function createConfigRepository({ database }) {
   if (!database || typeof database.prepare !== 'function') {
@@ -45,7 +50,6 @@ function createConfigRepository({ database }) {
 
   /**
    * 批量保存系统配置项。
-   * 核心分支：优先在事务边界内逐条 upsert，保证批量保存时的数据库一致性。
    * @param {Array<{ key: string, value: string }>} entries - 待保存配置项列表。
    * @returns {Promise<Array<{ key: string, value: string, updatedAt: string }>>} 已保存配置项列表。
    */
@@ -53,13 +57,12 @@ function createConfigRepository({ database }) {
     logger.info(`批量保存系统配置，条数：${entries.length}`);
 
     saveConfigsTransaction(entries);
-    return entries.map((entry) => selectStatement.get(entry.key));
+    return entries.map((entry) => getConfigSync(entry.key));
   }
 
   /**
    * 保存单个系统配置项。
-   * 核心分支：单条保存作为批量保存的薄包装，确保单条与批量写入共用同一数据库边界。
-   * @param {{ key: string, value: string }} config - 待保存配置，至少包含配置键和值。
+   * @param {{ key: string, value: string }} config - 待保存配置。
    * @returns {Promise<{ key: string, value: string, updatedAt: string }>} 已保存配置项。
    */
   async function saveConfig(config) {
@@ -69,20 +72,31 @@ function createConfigRepository({ database }) {
   }
 
   /**
+   * 同步读取单个系统配置项。
+   * 核心分支：未命中配置时返回 null，便于启动阶段继续回退环境变量。
+   * @param {string} key - 待查询的配置键。
+   * @returns {{ key: string, value: string, updatedAt: string } | null} 配置项或空值。
+   */
+  function getConfigSync(key) {
+    logger.info(`同步读取系统配置：${key}`);
+    return selectStatement.get(key) || null;
+  }
+
+  /**
    * 读取单个系统配置项。
-   * 核心分支：未命中配置时返回 null，避免上层把缺省场景误判为异常。
    * @param {string} key - 待查询的配置键。
    * @returns {Promise<{ key: string, value: string, updatedAt: string } | null>} 配置项或空值。
    */
   async function getConfig(key) {
     logger.info(`读取系统配置：${key}`);
-    return selectStatement.get(key) || null;
+    return getConfigSync(key);
   }
 
   return {
     saveConfig,
     saveConfigs,
-    getConfig
+    getConfig,
+    getConfigSync
   };
 }
 
