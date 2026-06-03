@@ -2,6 +2,7 @@
   "name": "tl-telegram-bot",
   "version": "1.0.0",
   "private": true,
+  "description": "Telegram Bot Phase 1 workspace",
   "workspaces": [
     "server",
     "web"
