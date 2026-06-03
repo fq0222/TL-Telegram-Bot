@@ -1,0 +1,15 @@
+{
+  "name": "tl-telegram-bot",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "check": "npm --workspace server run test",
+    "dev:server": "npm --workspace server run dev",
+    "dev:web": "npm --workspace web run dev",
+    "build": "npm --workspace web run build"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node src/server.js",
+    "test": "node -e \"const fs=require('fs'); const cp=require('child_process'); const target='test/config-service.test.js'; if(!fs.existsSync(target)){console.error('Missing test file: '+target); process.exit(1);} const result=cp.spawnSync(process.execPath,['--test',target],{stdio:'inherit'}); process.exit(result.status ?? 1);\""
+  }
+}
