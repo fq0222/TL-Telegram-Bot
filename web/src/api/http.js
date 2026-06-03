@@ -27,6 +27,18 @@ export function clearAdminToken() {
 }
 
 /**
+ * 处理管理员会话失效。
+ * 核心分支语义：统一清理本地 token；若当前不在登录页则主动跳回登录页，避免页面停留在失效态。
+ */
+function handleUnauthorized() {
+  clearAdminToken();
+
+  if (window.location.pathname !== '/login') {
+    window.location.href = '/login';
+  }
+}
+
+/**
  * 发起最小 JSON 请求。
  * 核心分支语义：存在 token 时自动附带 Bearer 鉴权头；响应非 2xx 时抛出异常，便于页面统一处理提示。
  * @param {{ method?: string, path: string, body?: unknown }} options - 请求参数。
@@ -55,6 +67,10 @@ async function request(options) {
   const payload = await response.json();
 
   if (!response.ok) {
+    if (response.status === 401) {
+      handleUnauthorized();
+    }
+
     throw new Error(payload && payload.message ? payload.message : `Request failed: ${response.status}`);
   }
 

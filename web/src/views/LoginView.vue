@@ -1,11 +1,7 @@
 <template>
   <section class="auth-view">
     <div class="auth-view__panel">
-      <p class="auth-view__eyebrow">TLBOT ACCESS</p>
       <h1 class="auth-view__title">管理员登录</h1>
-      <p class="auth-view__description">
-        当前为一期最小骨架，登录后会保存管理员 token，并进入控制台页面。
-      </p>
 
       <form class="auth-view__form" @submit.prevent="handleLogin">
         <label class="field">
@@ -46,7 +42,7 @@ const form = reactive({
   password: ''
 });
 const submitting = ref(false);
-const message = ref('请输入管理员账号和密码后登录控制台。');
+const message = ref('');
 const messageTone = ref('muted');
 
 /**
