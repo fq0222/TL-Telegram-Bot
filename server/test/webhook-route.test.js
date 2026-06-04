@@ -443,6 +443,83 @@ test('createTelegramCommandService should send Telegram reply after internal API
   });
 });
 
+test('createTelegramCommandService should format server detail timestamps into readable datetime text', async () => {
+  const sentMessages = [];
+  const commandService = createTelegramCommandService({
+    configService: {
+      async getConfigs() {
+        return {
+          internal_api_base_url: 'http://internal.example.com',
+          internal_api_secret: 'test-secret'
+        };
+      }
+    },
+    internalApiServiceFactory() {
+      return {
+        async request(options) {
+          if (options.path === '/api/internal/telegram/admin/by-chat/20001') {
+            return {
+              code: 0,
+              message: 'ok',
+              data: {
+                bound: true
+              }
+            };
+          }
+
+          return {
+            code: 0,
+            message: 'ok',
+            data: {
+              server_id: 3,
+              server_name: '意大利01',
+              server_host: 'chit01.bidding.dpdns.org',
+              panel_api_status: 'healthy',
+              panel_auth_status: 'healthy',
+              xray_runtime_status: 'unknown',
+              last_success_at: '1780504561',
+              last_failure_at: null,
+              last_checked_at: '1780504561',
+              consecutive_failures: 0,
+              failure_reason: '',
+              failure_detail: ''
+            }
+          };
+        }
+      };
+    },
+    telegramApiService: {
+      async sendMessage(payload) {
+        sentMessages.push(payload);
+        return {
+          ok: true,
+          result: {
+            message_id: 2
+          }
+        };
+      }
+    }
+  });
+
+  await commandService.handleUpdate({
+    update_id: 123456791,
+    message: {
+      text: '/server 3',
+      chat: {
+        id: 20001,
+        type: 'private'
+      },
+      from: {
+        id: 30001
+      }
+    }
+  });
+
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0].text, /"last_success_at": "2026-06-04_00-36-01"/);
+  assert.match(sentMessages[0].text, /"last_checked_at": "2026-06-04_00-36-01"/);
+});
+
 test('createTelegramCommandService should dispatch /bind directly to internal API bind verify endpoint', async () => {
   const requestCalls = [];
   const commandService = createTelegramCommandService({

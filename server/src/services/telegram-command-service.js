@@ -3,9 +3,11 @@
  * 让 Webhook 在联调成功后能够真正把处理结果回复给 Telegram 会话。
  */
 const { createLogger } = require('../utils/logger');
+const { formatUnixTimestamp } = require('../utils/time');
 const { createInternalApiService } = require('./internal-api-service');
 
 const logger = createLogger('TelegramCommandService');
+const SERVER_DETAIL_TIME_FIELDS = ['last_success_at', 'last_checked_at'];
 
 /**
  * 安全提取对象字符串字段。
@@ -28,6 +30,25 @@ function stringifyReadable(payload) {
   } catch (_error) {
     return String(payload);
   }
+}
+
+/**
+ * 格式化服务器详情中的时间字段，便于管理员直接阅读。
+ * @param {Record<string, unknown>} data - 服务器详情对象。
+ * @returns {Record<string, unknown>} 转换过时间字段后的详情对象。
+ */
+function formatServerDetailData(data = {}) {
+  const normalizedData = { ...data };
+
+  SERVER_DETAIL_TIME_FIELDS.forEach((fieldName) => {
+    const formattedValue = formatUnixTimestamp(normalizedData[fieldName]);
+
+    if (formattedValue) {
+      normalizedData[fieldName] = formattedValue;
+    }
+  });
+
+  return normalizedData;
 }
 
 /**
@@ -146,7 +167,7 @@ function buildSuccessReply(command, response) {
   }
 
   if (command.command === 'server') {
-    return `服务器详情\n${stringifyReadable(data)}`;
+    return `服务器详情\n${stringifyReadable(formatServerDetailData(data))}`;
   }
 
   if (command.command === 'alerts') {
