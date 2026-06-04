@@ -84,10 +84,14 @@ function formatServersReply(data = {}) {
         getString(server, 'server_name') ||
         getString(server, 'server_host') ||
         String(server.server_id || index + 1);
+      const serverId =
+        server.server_id === undefined || server.server_id === null ? String(index + 1) : String(server.server_id);
 
-      return `${index + 1}. ${name}\n面板 API：${getString(server, 'panel_api_status') || 'unknown'}\n面板鉴权：${
-        getString(server, 'panel_auth_status') || 'unknown'
-      }\nXray：${getString(server, 'xray_runtime_status') || 'unknown'}`;
+      return `${index + 1}. ${name}（server id: ${serverId}）\n面板 API：${
+        getString(server, 'panel_api_status') || 'unknown'
+      }\n面板鉴权：${getString(server, 'panel_auth_status') || 'unknown'}\nXray：${
+        getString(server, 'xray_runtime_status') || 'unknown'
+      }`;
     })
   ].join('\n');
 }
