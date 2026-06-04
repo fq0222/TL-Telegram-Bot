@@ -1,20 +1,46 @@
 /**
- * 概述：提供服务端启动入口，负责读取环境配置、判断 TLS 就绪状态，并在 HTTPS 与降级 HTTP 监听之间切换。
+ * 概述：服务端顶层启动入口，只负责组装运行时、创建应用、注册关闭流程并启动监听。
  */
-const http = require('http');
-const https = require('https');
 const path = require('path');
+
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+
 const { createApp } = require('./app');
+const { createListeningServer } = require('./bootstrap/create-server');
+const { createRuntime, createJobsRuntime, resolveAlertPollIntervalMs } = require('./bootstrap/create-runtime');
+const registerShutdown = require('./bootstrap/register-shutdown');
 const { loadServerEnv } = require('./config/env');
-const { createHttpsStateService } = require('./services/https-state-service');
+const { startAllJobs, stopAllJobs } = require('./jobs');
+const { createAdminRoutes } = require('./routes/admin-routes');
 const { createLogger } = require('./utils/logger');
 
 const logger = createLogger('Server');
 
 /**
+ * 创建管理员路由实例。
+ * @param {{
+ *   expressLib?: Function & { Router?: Function },
+ *   runtime: ReturnType<typeof createRuntime>,
+ *   devAuth?: { token?: string, adminId?: string, sessionId?: string, tokenType?: string }
+ * }} options - 管理员路由所需依赖。
+ * @returns {unknown} 管理员路由实例。
+ */
+function createRuntimeAdminRoutes(options) {
+  return createAdminRoutes({
+    expressLib: options.expressLib,
+    devAuth: options.devAuth,
+    loginAttemptService: options.runtime.loginAttemptService,
+    configService: options.runtime.configService,
+    sessionRepository: options.runtime.sessionRepository,
+    certificateService: options.runtime.certificateService,
+    telegramApiService: options.runtime.telegramApiService
+  });
+}
+
+/**
  * 启动服务。
- * 核心分支语义：优先支持显式注入的 serverFactory/port 以便测试；否则按 TLS 状态决定启动 HTTPS 或降级 HTTP。
+ * 核心分支语义：优先支持显式注入的 runtime/app/serverFactory 便于测试；
+ * 服务监听成功后统一拉起 jobs，并复用同一份数据库与配置服务。
  * @param {{
  *   app?: unknown,
  *   env?: NodeJS.ProcessEnv,
@@ -22,51 +48,73 @@ const logger = createLogger('Server');
  *   httpModule?: { createServer: Function },
  *   httpsModule?: { createServer: Function },
  *   httpsStateService?: { resolveTlsState: Function },
+ *   runtime?: ReturnType<typeof createRuntime> | null,
+ *   jobsRuntime?: ReturnType<typeof createJobsRuntime> | null,
+ *   processObject?: NodeJS.Process,
  *   serverFactory?: Function
  * }} [options] - 可选启动参数。
  * @returns {import('http').Server | import('https').Server} 已启动的服务实例。
  */
 function startServer(options = {}) {
-  const app = options.app || createApp();
-  const runtimeEnv = loadServerEnv({ env: options.env });
-  const listenPort = Number.isInteger(options.port) && options.port > 0 ? options.port : runtimeEnv.port;
-  const httpModule = options.httpModule || http;
-  const httpsModule = options.httpsModule || https;
-  const httpsStateService = options.httpsStateService || createHttpsStateService();
+  let runtime = options.runtime || options.jobsRuntime || null;
 
-  if (typeof options.serverFactory === 'function') {
-    const injectedServer = options.serverFactory(app);
-
-    logger.info(`准备启动服务，监听地址 ${runtimeEnv.host}:${listenPort}`);
-    return injectedServer.listen(listenPort, () => {
-      logger.info(`服务已通过注入 serverFactory 启动，监听端口 ${listenPort}`);
-    });
+  if (!runtime) {
+    try {
+      runtime = createRuntime({
+        env: options.env,
+        fetchImpl: global.fetch
+      });
+    } catch (error) {
+      logger.warn(`创建统一运行时失败，将跳过后台任务启动：${error.message}`);
+      runtime = null;
+    }
   }
 
-  const tlsState = httpsStateService.resolveTlsState({
-    tlsFullchainPath: runtimeEnv.tlsFullchainPath,
-    tlsPrivkeyPath: runtimeEnv.tlsPrivkeyPath
+  const runtimeEnv = loadServerEnv({
+    env: options.env,
+    configService: runtime ? runtime.configService : undefined
   });
-  const server = tlsState.ready
-    ? httpsModule.createServer(
-        {
-          cert: tlsState.cert,
-          key: tlsState.key
-        },
-        app
-      )
-    : httpModule.createServer(app);
+  const listenPort = Number.isInteger(options.port) && options.port > 0 ? options.port : runtimeEnv.port;
+  const app =
+    options.app ||
+    createApp({
+      adminRoutes: runtime
+        ? createRuntimeAdminRoutes({
+            runtime
+          })
+        : undefined,
+      commandService: runtime ? runtime.commandService : undefined
+    });
 
-  logger.info(`准备启动服务，监听地址 ${runtimeEnv.host}:${listenPort}`);
+  let appServer = null;
+  registerShutdown({
+    logger,
+    stopAllJobs: () => stopAllJobs(runtime ? runtime.scheduler : global),
+    databaseManager: runtime ? runtime.database : null,
+    getServers() {
+      return {
+        appServer
+      };
+    },
+    processObject: options.processObject || process
+  });
 
-  return server.listen(listenPort, runtimeEnv.host, () => {
-    if (tlsState.ready) {
-      logger.info(`HTTPS 服务已启动，监听地址 ${runtimeEnv.host}:${listenPort}`);
-      return;
+  appServer = createListeningServer({
+    app,
+    runtimeEnv,
+    listenPort,
+    httpModule: options.httpModule,
+    httpsModule: options.httpsModule,
+    httpsStateService: options.httpsStateService,
+    serverFactory: options.serverFactory,
+    onListening() {
+      if (runtime) {
+        startAllJobs(runtime);
+      }
     }
-
-    logger.warn(`HTTPS 证书未配置完成，已降级为 HTTP 监听 ${runtimeEnv.host}:${listenPort}`);
   });
+
+  return appServer;
 }
 
 if (require.main === module) {
@@ -74,5 +122,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createJobsRuntime,
+  createRuntime,
+  createRuntimeAdminRoutes,
+  resolveAlertPollIntervalMs,
   startServer
 };

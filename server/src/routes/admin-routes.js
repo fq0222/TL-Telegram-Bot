@@ -1,6 +1,6 @@
 /**
  * 概述：聚合管理员认证与配置相关路由，
- * 统一注入认证、登录冷却、证书与 Telegram 状态等依赖，保持管理端入口清晰稳定。
+ * 统一注入认证、登录冷却、证书与 Telegram 状态依赖，保持管理端入口清晰稳定。
  */
 const { createAdminAuthController } = require('../controllers/admin-auth-controller');
 const { createAdminConfigController } = require('../controllers/admin-config-controller');
@@ -9,14 +9,8 @@ const { createStatusController } = require('../controllers/status-controller');
 const { createAdminAuthMiddleware } = require('../middlewares/admin-auth-middleware');
 const { createAdminAuthService } = require('../services/admin-auth-service');
 const { createAdminLoginAttemptService } = require('../services/admin-login-attempt-service');
-const { createConfigService } = require('../services/config-service');
-const { createConfigRepository } = require('../repositories/config-repository');
-const { createSessionRepository } = require('../repositories/session-repository');
-const { createDatabase } = require('../config/database');
 const { createCertificateService } = require('../services/certificate-service');
 const { createTelegramApiService } = require('../services/telegram-api-service');
-
-let runtimeAdminServices = null;
 
 /**
  * 读取证书服务所需的目录配置。
@@ -37,73 +31,27 @@ function resolveCertificateServiceOptions() {
 }
 
 /**
- * 创建运行期管理员依赖。
- * @returns {{
- *   authService: { login: Function, verifyToken: Function, getCredentialProfile?: Function, updateCredentials?: Function },
- *   loginAttemptService: { assertAttemptAllowed: Function, registerAttempt: Function },
- *   configService: { getConfigs: Function, saveConfigs: Function },
- *   sessionRepository: { saveSession: Function, getSession: Function } | null,
- *   certificateService: { listDomains: Function, activateDomain: Function },
- *   telegramApiService: { setWebhook: Function, getWebhookInfo: Function }
- * }} 运行期依赖集合。
+ * 创建默认配置服务占位实现。
+ * @returns {{ saveConfigs: Function, getConfigs: Function }} 默认配置服务。
  */
-function getRuntimeAdminServices() {
-  if (runtimeAdminServices) {
-    return runtimeAdminServices;
-  }
-
-  try {
-    const database = createDatabase();
-    const configRepository = createConfigRepository({ database });
-    const sessionRepository = createSessionRepository({ database });
-    const configService = createConfigService({ repository: configRepository });
-
-    runtimeAdminServices = {
-      configService,
-      authService: null,
-      loginAttemptService: createAdminLoginAttemptService(),
-      sessionRepository,
-      certificateService: createCertificateService(resolveCertificateServiceOptions()),
-      telegramApiService: createTelegramApiService({
-        configService,
-        fetchImpl: global.fetch
-      })
-    };
-    runtimeAdminServices.authService = createAdminAuthService({
-      configService: runtimeAdminServices.configService,
-      sessionRepository: runtimeAdminServices.sessionRepository
-    });
-  } catch (_error) {
-    runtimeAdminServices = {
-      authService: null,
-      loginAttemptService: createAdminLoginAttemptService(),
-      sessionRepository: null,
-      configService: {
-        async saveConfigs() {
-          return [];
-        },
-        async getConfigs(keys) {
-          return keys.reduce((result, key) => {
-            result[key] = '';
-            return result;
-          }, {});
-        }
-      },
-      certificateService: createCertificateService(resolveCertificateServiceOptions()),
-      telegramApiService: createTelegramApiService({
-        botToken: process.env.TELEGRAM_BOT_TOKEN
-      })
-    };
-    runtimeAdminServices.authService = createAdminAuthService({
-      configService: runtimeAdminServices.configService
-    });
-  }
-
-  return runtimeAdminServices;
+function createFallbackConfigService() {
+  return {
+    async saveConfigs() {
+      return [];
+    },
+    async getConfigs(keys) {
+      return keys.reduce((result, key) => {
+        result[key] = '';
+        return result;
+      }, {});
+    }
+  };
 }
 
 /**
  * 创建管理员路由。
+ * 核心分支语义：优先使用外部注入依赖；未注入时仅创建轻量默认服务，
+ * 避免在路由层再次隐式创建数据库连接。
  * @param {{
  *   expressLib?: Function & { Router?: Function },
  *   authService?: { login: Function, verifyToken: Function, getCredentialProfile?: Function, updateCredentials?: Function },
@@ -114,19 +62,14 @@ function getRuntimeAdminServices() {
  *   telegramApiService?: { setWebhook: Function, getWebhookInfo: Function },
  *   devAuth?: { token?: string, adminId?: string, sessionId?: string, tokenType?: string }
  * }} [options] - 路由依赖。
- * @returns {import('express').Router | {post: Function, get: Function}} 管理员路由实例。
+ * @returns {import('express').Router | {post: Function, get: Function, put: Function}} 管理员路由实例。
  */
 function createAdminRoutes(options = {}) {
   const expressLib = options.expressLib || require('express');
   const router = expressLib.Router();
-  const runtimeServices = getRuntimeAdminServices();
-  const configService = options.configService || runtimeServices.configService;
-  const sessionRepository = options.sessionRepository || runtimeServices.sessionRepository;
-  const loginAttemptService =
-    options.loginAttemptService ||
-    (options.authService || options.devAuth
-      ? createAdminLoginAttemptService()
-      : runtimeServices.loginAttemptService);
+  const configService = options.configService || createFallbackConfigService();
+  const sessionRepository = options.sessionRepository || null;
+  const loginAttemptService = options.loginAttemptService || createAdminLoginAttemptService();
   const authService =
     options.authService ||
     createAdminAuthService({
@@ -134,12 +77,17 @@ function createAdminRoutes(options = {}) {
       configService,
       sessionRepository
     });
+  const certificateService = options.certificateService || createCertificateService(resolveCertificateServiceOptions());
+  const telegramApiService =
+    options.telegramApiService ||
+    createTelegramApiService({
+      configService,
+      fetchImpl: global.fetch
+    });
   const adminAuthController = createAdminAuthController({
     authService,
     loginAttemptService
   });
-  const certificateService = options.certificateService || runtimeServices.certificateService;
-  const telegramApiService = options.telegramApiService || runtimeServices.telegramApiService;
   const adminConfigController = createAdminConfigController({ configService });
   const certificateController = createCertificateController({
     certificateService,

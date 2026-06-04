@@ -34,7 +34,7 @@ module.exports = {
         ADMIN_PASSWORD: 'admin123456',
         ADMIN_LOGIN_COOLDOWN_SECONDS: 1800,
         ADMIN_TOKEN_TTL_SECONDS: 3600,
-        ALERT_POLL_INTERVAL_SECONDS: 60,
+        ALERT_POLL_INTERVAL_SECONDS: 3600,
         ACME_BASE_PATH: '/root/.acme.sh',
         TLS_TARGET_BASE_PATH: '/root/tlboot'
       }

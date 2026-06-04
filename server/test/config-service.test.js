@@ -56,6 +56,8 @@ test('startServer should support injected app and serverFactory', () => {
   const fakeApp = { name: 'injected-app' };
   let createAppCalled = 0;
   let serverFactoryApp = null;
+  const shutdownRegistrations = [];
+  const loadServerEnvCalls = [];
 
   const { startServer } = loadWithMocks(path.resolve(__dirname, '../src/server.js'), {
     './app': {
@@ -72,14 +74,57 @@ test('startServer should support injected app and serverFactory', () => {
           error() {}
         };
       }
-    }
+    },
+    './jobs': {
+      startAllJobs() {},
+      stopAllJobs() {}
+    },
+    './bootstrap/create-server': {
+      createListeningServer({ app, listenPort, serverFactory, onListening }) {
+        serverFactoryApp = app;
+        const server = serverFactory(app);
+        listenCalls.push(listenPort);
+        onListening();
+        return server;
+      }
+    },
+    './config/env': {
+      loadServerEnv(options) {
+        loadServerEnvCalls.push(options);
+        return {
+          host: '0.0.0.0',
+          port: 443,
+          tlsFullchainPath: '',
+          tlsPrivkeyPath: '',
+          nodeEnv: 'test'
+        };
+      }
+    },
+    './bootstrap/create-runtime': {
+      createRuntime() {
+        throw new Error('should not be called');
+      },
+      createJobsRuntime() {
+        throw new Error('should not be called');
+      },
+      resolveAlertPollIntervalMs() {
+        return 60000;
+      }
+    },
+    './bootstrap/register-shutdown': (options) => {
+        shutdownRegistrations.push(options);
+        return async () => {};
+      }
   });
 
   const server = startServer({
     app: fakeApp,
     port: 3456,
+    jobsRuntime: {
+      scheduler: global,
+      database: null
+    },
     serverFactory(app) {
-      serverFactoryApp = app;
       return fakeServer;
     }
   });
@@ -88,6 +133,196 @@ test('startServer should support injected app and serverFactory', () => {
   assert.equal(createAppCalled, 0);
   assert.equal(serverFactoryApp, fakeApp);
   assert.deepEqual(listenCalls, [3456]);
+  assert.equal(loadServerEnvCalls.length, 1);
+  assert.equal(loadServerEnvCalls[0].configService, undefined);
+  assert.equal(shutdownRegistrations.length, 1);
+});
+
+test('startServer should start jobs after server begins listening', () => {
+  const fakeServer = {
+    listen(_port, callback) {
+      if (callback) {
+        callback();
+      }
+      return this;
+    }
+  };
+  let startedJobsRuntime = null;
+  const loadServerEnvCalls = [];
+
+  const { startServer } = loadWithMocks(path.resolve(__dirname, '../src/server.js'), {
+    './app': {
+      createApp() {
+        return { name: 'default-app' };
+      }
+    },
+    './utils/logger': {
+      createLogger() {
+        return {
+          info() {},
+          warn() {},
+          error() {}
+        };
+      }
+    },
+    './jobs': {
+      startAllJobs(runtime) {
+        startedJobsRuntime = runtime;
+      },
+      stopAllJobs() {}
+    },
+    './bootstrap/create-server': {
+      createListeningServer({ serverFactory, onListening, app }) {
+        const server = serverFactory(app);
+        onListening();
+        return server;
+      }
+    },
+    './config/env': {
+      loadServerEnv(options) {
+        loadServerEnvCalls.push(options);
+        return {
+          host: '0.0.0.0',
+          port: 443,
+          tlsFullchainPath: '',
+          tlsPrivkeyPath: '',
+          nodeEnv: 'test'
+        };
+      }
+    },
+    './bootstrap/create-runtime': {
+      createRuntime() {
+        throw new Error('should not be called');
+      },
+      createJobsRuntime() {
+        throw new Error('should not be called');
+      },
+      resolveAlertPollIntervalMs() {
+        return 60000;
+      }
+    },
+    './bootstrap/register-shutdown': () => {
+        return async () => {};
+      }
+  });
+
+  const jobsRuntime = {
+    scheduler: global,
+    database: null
+  };
+  startServer({
+    app: { name: 'injected-app' },
+    port: 3456,
+    jobsRuntime,
+    serverFactory() {
+      return fakeServer;
+    }
+  });
+
+  assert.equal(startedJobsRuntime, jobsRuntime);
+  assert.equal(loadServerEnvCalls[0].configService, undefined);
+});
+
+test('startServer should build app from unified runtime and inject configService into env loader', () => {
+  const createdApps = [];
+  const createdAdminRoutes = [];
+  const loadServerEnvCalls = [];
+  let startedJobsRuntime = null;
+  const runtime = {
+    database: { close() {} },
+    configService: { getConfigsSync() { return {}; } },
+    sessionRepository: { getSession() {}, saveSession() {} },
+    loginAttemptService: { assertAttemptAllowed() {}, registerAttempt() {} },
+    certificateService: { listDomains() {}, activateDomain() {} },
+    telegramApiService: { setWebhook() {}, getWebhookInfo() {} },
+    commandService: { handleUpdate() {} },
+    telegramAlertPollingService: { pollOnce() {} },
+    alertPollIntervalMs: 3600000,
+    scheduler: global
+  };
+
+  const { startServer } = loadWithMocks(path.resolve(__dirname, '../src/server.js'), {
+    './app': {
+      createApp(options) {
+        createdApps.push(options);
+        return { name: 'runtime-app' };
+      }
+    },
+    './routes/admin-routes': {
+      createAdminRoutes(options) {
+        createdAdminRoutes.push(options);
+        return { name: 'admin-routes' };
+      }
+    },
+    './config/env': {
+      loadServerEnv(options) {
+        loadServerEnvCalls.push(options);
+        return {
+          host: '127.0.0.1',
+          port: 9443,
+          tlsFullchainPath: '',
+          tlsPrivkeyPath: '',
+          nodeEnv: 'test'
+        };
+      }
+    },
+    './bootstrap/create-runtime': {
+      createRuntime() {
+        return runtime;
+      },
+      createJobsRuntime() {
+        throw new Error('should not be called');
+      },
+      resolveAlertPollIntervalMs() {
+        return 3600000;
+      }
+    },
+    './bootstrap/create-server': {
+      createListeningServer({ app, onListening, listenPort }) {
+        assert.equal(app.name, 'runtime-app');
+        assert.equal(listenPort, 9443);
+        onListening();
+        return {
+          close(callback) {
+            if (callback) {
+              callback();
+            }
+          }
+        };
+      }
+    },
+    './bootstrap/register-shutdown': () => async () => {},
+    './jobs': {
+      startAllJobs(injectedRuntime) {
+        startedJobsRuntime = injectedRuntime;
+      },
+      stopAllJobs() {}
+    },
+    './utils/logger': {
+      createLogger() {
+        return {
+          info() {},
+          warn() {},
+          error() {}
+        };
+      }
+    }
+  });
+
+  startServer();
+
+  assert.equal(loadServerEnvCalls.length, 1);
+  assert.equal(loadServerEnvCalls[0].configService, runtime.configService);
+  assert.equal(createdAdminRoutes.length, 1);
+  assert.equal(createdAdminRoutes[0].configService, runtime.configService);
+  assert.equal(createdAdminRoutes[0].sessionRepository, runtime.sessionRepository);
+  assert.equal(createdAdminRoutes[0].loginAttemptService, runtime.loginAttemptService);
+  assert.equal(createdAdminRoutes[0].certificateService, runtime.certificateService);
+  assert.equal(createdAdminRoutes[0].telegramApiService, runtime.telegramApiService);
+  assert.equal(createdApps.length, 1);
+  assert.equal(createdApps[0].commandService, runtime.commandService);
+  assert.deepEqual(createdApps[0].adminRoutes, { name: 'admin-routes' });
+  assert.equal(startedJobsRuntime, runtime);
 });
 
 test('errorHandler should hide internal message and details for unknown 5xx errors', () => {

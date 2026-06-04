@@ -10,14 +10,9 @@ const { createLogger } = require('./utils/logger');
 const { ok } = require('./utils/response');
 const { createWebhookRoutes } = require('./routes/webhook-routes');
 const { createTelegramCommandService } = require('./services/telegram-command-service');
-const { createTelegramApiService } = require('./services/telegram-api-service');
-const { createConfigService } = require('./services/config-service');
-const { createConfigRepository } = require('./repositories/config-repository');
-const { createDatabase } = require('./config/database');
 
 const logger = createLogger('App');
 const adminSpaEntryPath = path.resolve(__dirname, '../../web/dist/index.html');
-let runtimeCommandService = null;
 
 /**
  * 规范化管理员隐藏访问路径。
@@ -86,50 +81,9 @@ function shouldServeAdminSpa(req, adminBasePath) {
 }
 
 /**
- * 创建运行期 Telegram 命令服务。
- * @returns {{ handleUpdate: Function }} 运行期命令服务。
- */
-function getRuntimeCommandService() {
-  if (runtimeCommandService) {
-    return runtimeCommandService;
-  }
-
-  try {
-    const database = createDatabase();
-    const configRepository = createConfigRepository({ database });
-    const configService = createConfigService({ repository: configRepository });
-    const telegramApiService = createTelegramApiService({
-      configService,
-      fetchImpl: global.fetch
-    });
-
-    runtimeCommandService = createTelegramCommandService({
-      configService,
-      telegramApiService,
-      fetchImpl: global.fetch
-    });
-  } catch (_error) {
-    runtimeCommandService = createTelegramCommandService({
-      configService: {
-        async getConfigs(keys) {
-          return keys.reduce((result, key) => {
-            result[key] = '';
-            return result;
-          }, {});
-        }
-      },
-      telegramApiService: createTelegramApiService({
-        fetchImpl: global.fetch
-      }),
-      fetchImpl: global.fetch
-    });
-  }
-
-  return runtimeCommandService;
-}
-
-/**
  * 创建 Express 应用实例。
+ * 核心分支语义：优先使用外部注入的路由与命令服务；未注入时仅创建轻量默认依赖，
+ * 避免在应用层再次隐式创建数据库。
  * @param {{
  *   expressLib?: Function & { json?: Function },
  *   adminRoutes?: unknown,
@@ -145,6 +99,7 @@ function createApp(options = {}) {
   const adminAccessPath = normalizeAdminAccessPath(options.adminAccessPath || process.env.ADMIN_ACCESS_PATH);
   const adminBasePath = resolveAdminSpaBasePath(adminAccessPath);
   const adminApiMountPath = resolveAdminApiMountPath(adminAccessPath);
+  const commandService = options.commandService || createTelegramCommandService();
   const adminRoutes =
     options.adminRoutes ||
     require('./routes/admin-routes').createAdminRoutes({
@@ -155,7 +110,7 @@ function createApp(options = {}) {
     options.webhookRoutes ||
     createWebhookRoutes({
       expressLib,
-      commandService: options.commandService || getRuntimeCommandService()
+      commandService
     });
   const app = expressLib();
 
