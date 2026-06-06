@@ -5,28 +5,69 @@ const path = require('path');
 
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
-const { createApp } = require('./app');
-const { createListeningServer } = require('./bootstrap/create-server');
-const { createRuntime, createJobsRuntime, resolveAlertPollIntervalMs } = require('./bootstrap/create-runtime');
+const { AppBuilder, createApp } = require('./app');
+const { ListeningServer, createListeningServer } = require('./bootstrap/create-server');
+const { JobsRuntime, Runtime, createJobsRuntime, createRuntime, resolveAlertPollIntervalMs } = require('./bootstrap/create-runtime');
 const registerShutdown = require('./bootstrap/register-shutdown');
 const { loadServerEnv } = require('./config/env');
 const { startAllJobs, stopAllJobs } = require('./jobs');
-const { createAdminRoutes } = require('./routes/admin-routes');
+const { AdminRoutes, createAdminRoutes } = require('./routes/admin-routes');
 const { createLogger } = require('./utils/logger');
 
 const logger = createLogger('Server');
 
 /**
+ * 构建 Express 应用实例。
+ * @param {ConstructorParameters<typeof AppBuilder>[0]} options - 应用依赖注入项。
+ * @returns {unknown} Express 应用实例。
+ */
+function buildApplication(options) {
+  if (typeof AppBuilder === 'function') {
+    return new AppBuilder(options).build();
+  }
+
+  return createApp(options);
+}
+
+/**
+ * 启动监听服务。
+ * @param {ConstructorParameters<typeof ListeningServer>[0]} options - 监听服务依赖注入项。
+ * @returns {import('http').Server | import('https').Server} 已启动服务实例。
+ */
+function startListeningServer(options) {
+  if (typeof ListeningServer === 'function') {
+    return new ListeningServer(options).start();
+  }
+
+  const listeningServer = createListeningServer(options);
+
+  return listeningServer && typeof listeningServer.start === 'function' ? listeningServer.start() : listeningServer;
+}
+
+/**
+ * 创建统一运行时。
+ * @param {ConstructorParameters<typeof Runtime>[0]} options - 运行时依赖注入项。
+ * @returns {Runtime | object} 运行时对象。
+ */
+function buildRuntime(options) {
+  if (typeof Runtime === 'function') {
+    return new Runtime(options);
+  }
+
+  return createRuntime(options);
+}
+
+/**
  * 创建管理员路由实例。
  * @param {{
  *   expressLib?: Function & { Router?: Function },
- *   runtime: ReturnType<typeof createRuntime>,
+ *   runtime: Runtime,
  *   devAuth?: { token?: string, adminId?: string, sessionId?: string, tokenType?: string }
  * }} options - 管理员路由所需依赖。
  * @returns {unknown} 管理员路由实例。
  */
 function createRuntimeAdminRoutes(options) {
-  return createAdminRoutes({
+  const routeOptions = {
     expressLib: options.expressLib,
     devAuth: options.devAuth,
     loginAttemptService: options.runtime.loginAttemptService,
@@ -34,7 +75,13 @@ function createRuntimeAdminRoutes(options) {
     sessionRepository: options.runtime.sessionRepository,
     certificateService: options.runtime.certificateService,
     telegramApiService: options.runtime.telegramApiService
-  });
+  };
+
+  if (typeof AdminRoutes === 'function') {
+    return new AdminRoutes(routeOptions).getRouter();
+  }
+
+  return createAdminRoutes(routeOptions);
 }
 
 /**
@@ -48,8 +95,8 @@ function createRuntimeAdminRoutes(options) {
  *   httpModule?: { createServer: Function },
  *   httpsModule?: { createServer: Function },
  *   httpsStateService?: { resolveTlsState: Function },
- *   runtime?: ReturnType<typeof createRuntime> | null,
- *   jobsRuntime?: ReturnType<typeof createJobsRuntime> | null,
+ *   runtime?: Runtime | null,
+ *   jobsRuntime?: JobsRuntime | Runtime | null,
  *   processObject?: NodeJS.Process,
  *   serverFactory?: Function
  * }} [options] - 可选启动参数。
@@ -60,7 +107,7 @@ function startServer(options = {}) {
 
   if (!runtime) {
     try {
-      runtime = createRuntime({
+      runtime = buildRuntime({
         env: options.env,
         fetchImpl: global.fetch
       });
@@ -77,7 +124,7 @@ function startServer(options = {}) {
   const listenPort = Number.isInteger(options.port) && options.port > 0 ? options.port : runtimeEnv.port;
   const app =
     options.app ||
-    createApp({
+    buildApplication({
       adminRoutes: runtime
         ? createRuntimeAdminRoutes({
             runtime
@@ -99,7 +146,7 @@ function startServer(options = {}) {
     processObject: options.processObject || process
   });
 
-  appServer = createListeningServer({
+  appServer = startListeningServer({
     app,
     runtimeEnv,
     listenPort,
@@ -122,9 +169,14 @@ if (require.main === module) {
 }
 
 module.exports = {
+  JobsRuntime,
+  Runtime,
+  buildRuntime,
+  buildApplication,
   createJobsRuntime,
   createRuntime,
   createRuntimeAdminRoutes,
   resolveAlertPollIntervalMs,
+  startListeningServer,
   startServer
 };

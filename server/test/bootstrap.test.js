@@ -33,10 +33,10 @@ function loadWithMocks(relativeModulePath, mocks) {
   }
 }
 
-test('createRuntime should assemble unified runtime and create database once', () => {
+test('Runtime class and compatibility wrappers should assemble unified runtime and create database once', () => {
   const created = {};
   let databaseCreateCount = 0;
-  const { createRuntime, createJobsRuntime, resolveAlertPollIntervalMs } = loadWithMocks(
+  const { Runtime, JobsRuntime, createRuntime, createJobsRuntime, resolveAlertPollIntervalMs } = loadWithMocks(
     path.resolve(__dirname, '../src/bootstrap/create-runtime.js'),
     {
       '../config/database': {
@@ -108,7 +108,10 @@ test('createRuntime should assemble unified runtime and create database once', (
     clearTimeout() {}
   };
   const fetchImpl = () => {};
-  const runtime = createRuntime({
+  assert.equal(typeof Runtime, 'function');
+  assert.equal(typeof JobsRuntime, 'function');
+
+  const runtime = new Runtime({
     env: {
       ALERT_POLL_INTERVAL_SECONDS: '3600'
     },
@@ -139,10 +142,13 @@ test('createRuntime should assemble unified runtime and create database once', (
   assert.equal(created.commandServiceArgs.fetchImpl, fetchImpl);
   assert.equal(runtime.alertPollIntervalMs, 3600000);
   assert.equal(runtime.scheduler, scheduler);
+  assert.ok(createRuntime({ database: created.database, fetchImpl, scheduler }) instanceof Runtime);
+  assert.ok(new JobsRuntime({ database: created.database, fetchImpl, scheduler }) instanceof JobsRuntime);
+  assert.ok(createJobsRuntime({ database: created.database, fetchImpl, scheduler }) instanceof JobsRuntime);
   assert.equal(createJobsRuntime({ database: created.database, fetchImpl, scheduler }).database, created.database);
 });
 
-test('createListeningServer should honor injected serverFactory and invoke onListening', () => {
+test('ListeningServer class and compatibility wrapper should honor injected serverFactory and invoke onListening', () => {
   const listenCalls = [];
   const fakeServer = {
     listen(port, hostOrCallback, callback) {
@@ -156,7 +162,7 @@ test('createListeningServer should honor injected serverFactory and invoke onLis
     }
   };
   let onListeningCalled = 0;
-  const { createListeningServer } = loadWithMocks(path.resolve(__dirname, '../src/bootstrap/create-server.js'), {
+  const { ListeningServer, createListeningServer } = loadWithMocks(path.resolve(__dirname, '../src/bootstrap/create-server.js'), {
     '../utils/logger': {
       createLogger() {
         return {
@@ -168,7 +174,9 @@ test('createListeningServer should honor injected serverFactory and invoke onLis
     }
   });
 
-  const server = createListeningServer({
+  assert.equal(typeof ListeningServer, 'function');
+
+  const listeningServer = new ListeningServer({
     app: { name: 'app' },
     runtimeEnv: { host: '0.0.0.0', tlsFullchainPath: '', tlsPrivkeyPath: '' },
     listenPort: 3456,
@@ -179,8 +187,19 @@ test('createListeningServer should honor injected serverFactory and invoke onLis
       onListeningCalled += 1;
     }
   });
+  const server = listeningServer.start();
 
   assert.equal(server, fakeServer);
   assert.equal(onListeningCalled, 1);
   assert.equal(listenCalls.length, 1);
+  assert.ok(
+    createListeningServer({
+      app: { name: 'app' },
+      runtimeEnv: { host: '0.0.0.0', tlsFullchainPath: '', tlsPrivkeyPath: '' },
+      listenPort: 3456,
+      serverFactory() {
+        return fakeServer;
+      }
+    }) instanceof ListeningServer
+  );
 });

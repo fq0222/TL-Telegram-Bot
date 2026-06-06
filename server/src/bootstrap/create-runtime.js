@@ -29,76 +29,84 @@ function resolveAlertPollIntervalMs(env) {
 }
 
 /**
- * 创建统一运行时上下文。
- * 核心分支语义：数据库只创建一次，其余服务全部基于同一份 database/configService 派生，
- * 避免启动阶段重复建库与重复初始化。
- * @param {{
- *   env?: NodeJS.ProcessEnv,
- *   fetchImpl?: Function,
- *   scheduler?: { setInterval: Function, clearInterval: Function, setTimeout: Function, clearTimeout: Function },
- *   database?: { close?: Function }
- * }} [options] - 启动阶段依赖注入项。
- * @returns {{
- *   database: { close?: Function },
- *   configRepository: { getConfig?: Function, saveConfigs?: Function },
- *   sessionRepository: { saveSession?: Function, getSession?: Function },
- *   configService: { getConfigs: Function },
- *   loginAttemptService: { assertAttemptAllowed?: Function, registerAttempt?: Function },
- *   certificateService: { listDomains: Function, activateDomain: Function },
- *   telegramApiService: { sendMessage?: Function, setWebhook?: Function, getWebhookInfo?: Function },
- *   telegramAlertPollingService: { pollOnce: Function },
- *   commandService: { handleUpdate: Function, parseCommand?: Function },
- *   alertPollIntervalMs: number,
- *   scheduler: { setInterval: Function, clearInterval: Function, setTimeout: Function, clearTimeout: Function }
- * }} 统一运行时上下文。
+ * 统一运行时对象，集中表达服务启动阶段的对象生命周期。
  */
-function createRuntime(options = {}) {
-  const database = options.database || createDatabase();
-  const configRepository = createConfigRepository({ database });
-  const sessionRepository = createSessionRepository({ database });
-  const configService = createConfigService({ repository: configRepository });
-  const fetchImpl = options.fetchImpl || global.fetch;
-  const telegramApiService = createTelegramApiService({
-    configService,
-    fetchImpl
-  });
-  const telegramAlertPollingService = createTelegramAlertPollingService({
-    configService,
-    telegramApiService,
-    fetchImpl
-  });
-  const commandService = createTelegramCommandService({
-    configService,
-    telegramApiService,
-    fetchImpl
-  });
+class Runtime {
+  /**
+   * 创建统一运行时上下文。
+   * 核心分支语义：数据库只创建一次，其余服务全部基于同一份 database/configService 派生，
+   * 避免启动阶段重复建库与重复初始化。
+   * @param {{
+   *   env?: NodeJS.ProcessEnv,
+   *   fetchImpl?: Function,
+   *   scheduler?: { setInterval: Function, clearInterval: Function, setTimeout: Function, clearTimeout: Function },
+   *   database?: { close?: Function }
+   * }} [options] - 启动阶段依赖注入项。
+   */
+  constructor(options = {}) {
+    this.database = options.database || createDatabase();
+    this.configRepository = createConfigRepository({ database: this.database });
+    this.sessionRepository = createSessionRepository({ database: this.database });
+    this.configService = createConfigService({ repository: this.configRepository });
 
-  return {
-    database,
-    configRepository,
-    sessionRepository,
-    configService,
-    loginAttemptService: createAdminLoginAttemptService(),
-    certificateService: createCertificateService(resolveCertificateServiceOptions()),
-    telegramApiService,
-    telegramAlertPollingService,
-    commandService,
-    alertPollIntervalMs: resolveAlertPollIntervalMs(options.env || process.env),
-    scheduler: options.scheduler || global
-  };
+    const fetchImpl = options.fetchImpl || global.fetch;
+
+    this.loginAttemptService = createAdminLoginAttemptService();
+    this.certificateService = createCertificateService(resolveCertificateServiceOptions());
+    this.telegramApiService = createTelegramApiService({
+      configService: this.configService,
+      fetchImpl
+    });
+    this.telegramAlertPollingService = createTelegramAlertPollingService({
+      configService: this.configService,
+      telegramApiService: this.telegramApiService,
+      fetchImpl
+    });
+    this.commandService = createTelegramCommandService({
+      configService: this.configService,
+      telegramApiService: this.telegramApiService,
+      fetchImpl
+    });
+    this.alertPollIntervalMs = resolveAlertPollIntervalMs(options.env || process.env);
+    this.scheduler = options.scheduler || global;
+  }
 }
 
 /**
- * 创建后台任务运行时上下文。
- * 为兼容既有 jobs 调用方，当前直接复用统一 runtime。
- * @param {object} [options] - 运行时注入参数。
- * @returns {ReturnType<typeof createRuntime>} 后台任务运行时。
+ * 后台任务运行时对象，当前复用统一运行时的依赖装配。
+ */
+class JobsRuntime extends Runtime {
+  /**
+   * 创建后台任务运行时上下文。
+   * 核心分支语义：保留独立类名，便于后续 jobs 专属依赖扩展时不影响主服务启动链。
+   * @param {ConstructorParameters<typeof Runtime>[0]} [options] - 运行时注入参数。
+   */
+  constructor(options = {}) {
+    super(options);
+  }
+}
+
+/**
+ * 创建统一运行时上下文的迁移期兼容包装。
+ * @param {ConstructorParameters<typeof Runtime>[0]} [options] - 启动阶段依赖注入项。
+ * @returns {Runtime} 统一运行时上下文。
+ */
+function createRuntime(options = {}) {
+  return new Runtime(options);
+}
+
+/**
+ * 创建后台任务运行时上下文的迁移期兼容包装。
+ * @param {ConstructorParameters<typeof JobsRuntime>[0]} [options] - 运行时注入参数。
+ * @returns {JobsRuntime} 后台任务运行时。
  */
 function createJobsRuntime(options = {}) {
-  return createRuntime(options);
+  return new JobsRuntime(options);
 }
 
 module.exports = {
+  JobsRuntime,
+  Runtime,
   createRuntime,
   createJobsRuntime,
   resolveAlertPollIntervalMs

@@ -5,21 +5,51 @@ const { createWebhookController } = require('../controllers/webhook-controller')
 const { createTelegramCommandService } = require('../services/telegram-command-service');
 
 /**
- * 创建 Telegram Webhook 路由。
- * @param {{ expressLib?: Function & { Router?: Function }, commandService?: { handleUpdate: Function } }} [options] - 路由依赖，支持注入 express 与命令服务。
+ * Telegram Webhook 路由对象。
+ */
+class WebhookRoutes {
+  /**
+   * 创建 Telegram Webhook 路由。
+   * 核心分支语义：优先使用外部注入的 commandService，未注入时创建默认命令服务。
+   * @param {{ expressLib?: Function & { Router?: Function }, commandService?: { handleUpdate: Function } }} [options] - 路由依赖。
+   */
+  constructor(options = {}) {
+    this.expressLib = options.expressLib || require('express');
+    this.router = this.expressLib.Router();
+    this.commandService = options.commandService || createTelegramCommandService();
+    this.webhookController = createWebhookController({ commandService: this.commandService });
+
+    this.getRouter = this.getRouter.bind(this);
+    this.registerRoutes();
+  }
+
+  /**
+   * 注册 Telegram Webhook 路由处理器。
+   * @returns {void}
+   */
+  registerRoutes() {
+    this.router.post('/webhook', this.webhookController.handleTelegramWebhook);
+  }
+
+  /**
+   * 返回 Express Router 实例。
+   * @returns {import('express').Router | {post: Function}} Telegram Webhook 路由实例。
+   */
+  getRouter() {
+    return this.router;
+  }
+}
+
+/**
+ * 创建 Telegram Webhook 路由的迁移期兼容包装。
+ * @param {ConstructorParameters<typeof WebhookRoutes>[0]} [options] - 路由依赖。
  * @returns {import('express').Router | {post: Function}} Telegram Webhook 路由实例。
  */
 function createWebhookRoutes(options = {}) {
-  const expressLib = options.expressLib || require('express');
-  const router = expressLib.Router();
-  const commandService = options.commandService || createTelegramCommandService();
-  const webhookController = createWebhookController({ commandService });
-
-  router.post('/webhook', webhookController.handleTelegramWebhook);
-
-  return router;
+  return new WebhookRoutes(options).getRouter();
 }
 
 module.exports = {
+  WebhookRoutes,
   createWebhookRoutes
 };
